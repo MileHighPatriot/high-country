@@ -48,7 +48,7 @@ export const LOCATIONS: LocationDef[] = [
     art: "/art/locations/ute-camp.jpg",
     blurb:
       "Hide lodges in a sheltered park when the band is here. In deep winter the rings of stone are all that remain, and the silence is a kind of answer.",
-    tags: ["trade", "shelter"],
+    tags: ["trade", "shelter", "wood"],
     connections: [
       { to: "elk-wallow", hours: 2, trailName: "the meat trail" },
       { to: "arapaho-ground", hours: 4, trailName: "across the park to Arapaho ground" },
@@ -61,7 +61,7 @@ export const LOCATIONS: LocationDef[] = [
     art: "/art/locations/abandoned-cabin.jpg",
     blurb:
       "Peeled-log walls, a stove that still draws if you treat it right. Someone claimed this. Someone may still.",
-    tags: ["shelter"],
+    tags: ["shelter", "wood"],
     connections: [
       { to: "timberline", hours: 3, trailName: "back to timberline" },
       { to: "homesteader-ruin", hours: 3, trailName: "a fenceline gone to rot" },
@@ -188,7 +188,7 @@ export const LOCATIONS: LocationDef[] = [
     art: "/art/locations/mexican-trail-camp.jpg",
     blurb:
       "A seasonal camp on the old Taos trace: cart ruts, a stone ring, the ghost of chile and mule. People in summer. Wind in winter.",
-    tags: ["trade", "shelter"],
+    tags: ["trade", "shelter", "wood"],
     connections: [
       { to: "south-park-rim", hours: 3, trailName: "up to the rim" },
       { to: "homesteader-ruin", hours: 3, trailName: "toward the ruin" },
@@ -212,7 +212,7 @@ export const LOCATIONS: LocationDef[] = [
     art: "/art/locations/cache-deadfall.jpg",
     blurb:
       "A sprung deadfall and a hole that has been dug more than once. Someone believed this ground would keep a secret.",
-    tags: [],
+    tags: ["wood"],
     connections: [
       { to: "abandoned-cabin", hours: 2, trailName: "to the cabin" },
       { to: "lightning-pine", hours: 2, trailName: "to the split pine" },
@@ -237,7 +237,7 @@ export const LOCATIONS: LocationDef[] = [
     art: "/art/locations/homesteader-ruin.jpg",
     blurb:
       "A foundation and a chimney that outlived the people. A child’s shoe in the weeds if you look too long.",
-    tags: ["shelter"],
+    tags: ["shelter", "wood"],
     connections: [
       { to: "abandoned-cabin", hours: 3, trailName: "the fenceline to the cabin" },
       { to: "mexican-trail-camp", hours: 3, trailName: "the Taos trace" },

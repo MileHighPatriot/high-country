@@ -1463,4 +1463,85 @@ export const WINTER_ENCOUNTERS: EncounterDef[] = [
       },
     ],
   },
+  {
+    id: "win-arapaho-cairn",
+    season: "winter",
+    locations: ["arapaho-ground"],
+    text: "The park is a white plate. A cairn you used for a bearing is a rumor under drift. Wind writes the same sentence in every direction.",
+    choices: [
+      {
+        id: "dig",
+        label: "Dig for the cairn and sit its lee",
+        check: { trait: "eye", dc: 13 },
+        success: {
+          text: "Your shin finds rock. You huddle until the world has edges. The rim is a dark stitch you can still name.",
+          hours: 3,
+          meters: { warmth: -12, energy: -8 },
+          unlockLocation: "south-park-rim",
+        },
+        fail: {
+          text: "No cairn. You sit anyway. When it thins you are a mile wrong and still here.",
+          hours: 4,
+          meters: { warmth: -18, energy: -12, health: -4 },
+        },
+      },
+      {
+        id: "back",
+        label: "Turn back toward timber while you still know timber",
+        outcome: { text: "Pride can freeze. You crawl toward a memory of trees.", hours: 2, meters: { energy: -10, warmth: -12 } },
+      },
+    ],
+  },
+  {
+    id: "win-ute-sinew",
+    season: "winter",
+    locations: ["ute-camp"],
+    text: "Under a lodge ring, a cache of sinew and a fire-drill kit wrapped in hide, set above last week’s blow. Tied with a knot that is not yours.",
+    choices: [
+      {
+        id: "take",
+        label: "Take the kit",
+        outcome: {
+          text: "You will start fires with it. You will also be a story in spring, if anyone comes back to tell it.",
+          hours: 1,
+          extraAdd: "fire-drill",
+          inventory: { firewood: 1 },
+          standing: { id: "two-crows", delta: -2 },
+        },
+      },
+      {
+        id: "leave",
+        label: "Leave the cache",
+        outcome: { text: "Someone counted on this ring. You walk around that fact.", hours: 1, standing: { id: "two-crows", delta: 1 } },
+      },
+    ],
+  },
+  {
+    id: "win-trail-ring",
+    season: "winter",
+    locations: ["mexican-trail-camp"],
+    text: "The stone ring still holds a bed of charcoal under the crust. Someone tried a fire here after the carts left and did not stay to see it through.",
+    choices: [
+      {
+        id: "rebuild",
+        label: "Rebuild the fire in their ring",
+        outcome: {
+          text: "The stones remember heat. You get a mean little flame and an hour that does not try to kill you.",
+          hours: 2,
+          inventory: { firewood: -1 },
+          meters: { warmth: 16, energy: 4 },
+        },
+      },
+      {
+        id: "char",
+        label: "Bag the charcoal and go",
+        outcome: {
+          text: "Light, dirty, useful. You blacken the blanket and do not care.",
+          hours: 1,
+          inventory: { firewood: 1 },
+          extraAdd: "charcoal-ends",
+        },
+      },
+    ],
+  },
 ];

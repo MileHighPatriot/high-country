@@ -919,4 +919,118 @@ export const SPRING_ENCOUNTERS: EncounterDef[] = [
       { id: "careful", label: "Go careful — it could be bait", outcome: { text: "It is not bait. It is worse: a real man. You find him anyway.", hours: 2, presentCharacter: "alejandro-vega" } },
     ],
   },
+  {
+    id: "spr-ute-hide-rack",
+    season: "spring",
+    locations: ["ute-camp"],
+    text: "A hide rack still stands from last fall, sagging. Dogs have been at the lower strips. High up, a piece the weather has not finished.",
+    choices: [
+      {
+        id: "take",
+        label: "Take what the dogs cannot reach",
+        outcome: {
+          text: "Jerky hard as harness. You leave a ration on a ring-stone because you are not a fool about spring and memory.",
+          hours: 1,
+          inventory: { rations: 1 },
+          standing: { id: "two-crows", delta: -1 },
+        },
+      },
+      {
+        id: "leave",
+        label: "Leave the rack its last strip",
+        outcome: {
+          text: "You walk around another people’s winter. The ring-stones do not comment.",
+          hours: 1,
+          standing: { id: "two-crows", delta: 1 },
+        },
+      },
+    ],
+  },
+  {
+    id: "spr-arapaho-horse",
+    season: "spring",
+    locations: ["arapaho-ground"],
+    text: "A horse, fat on new grass, watches you from a draw. No saddle. A hand-print in red on the shoulder, faded. This is not a stray. This is a sentence you can misread.",
+    choices: [
+      {
+        id: "wide",
+        label: "Give it a wide berth",
+        outcome: {
+          text: "You keep to the edge of the park. Later you find a seep the maps do not have, which is the whole reward for not being greedy.",
+          hours: 2,
+          inventory: { water: 1 },
+          standing: { id: "nawat", delta: 1 },
+        },
+      },
+      {
+        id: "catch",
+        label: "Catch it anyway",
+        check: { trait: "hands", dc: 14 },
+        success: {
+          text: "You get a hand on the mane. It does not throw you. It also does not become yours. You let go before the park invents a witness.",
+          hours: 2,
+          meters: { energy: -10 },
+          standing: { id: "nawat", delta: -2 },
+        },
+        fail: {
+          text: "It runs like it has heard this story. You eat dirt. The park keeps the horse.",
+          hours: 2,
+          meters: { energy: -12, health: -4 },
+          standing: { id: "nawat", delta: -1 },
+        },
+      },
+    ],
+  },
+  {
+    id: "spr-chute-femur",
+    season: "spring",
+    locations: ["avalanche-chute"],
+    text: "A smashed fir, a femur the melt uncovered, boot still laced around what is left. Last winter’s chute fired and did not send a letter.",
+    choices: [
+      {
+        id: "poke",
+        label: "Poke the debris",
+        outcome: {
+          text: "A powder horn, cracked, two charges still dry in oiled cloth. You take them and do not make a speech.",
+          hours: 2,
+          inventory: { powder: 2 },
+          meters: { energy: -8 },
+        },
+      },
+      {
+        id: "go",
+        label: "Get off the runout",
+        outcome: { text: "The slope can fire twice. Spring snow is a liar with a long memory.", hours: 1 },
+      },
+    ],
+  },
+  {
+    id: "spr-fall-pool",
+    season: "spring",
+    locations: ["frozen-fall"],
+    text: "The pool below the pillar is a wound of black water and spinning ice. Trout hold in the tailout like a rumor you could eat.",
+    choices: [
+      {
+        id: "fish",
+        label: "Fish the tailout",
+        check: { trait: "hands", dc: 13 },
+        success: {
+          text: "One dark fish, cold as a coin. You eat it before the idea of later can steal it.",
+          hours: 3,
+          inventory: { rations: 1 },
+          meters: { warmth: -10, energy: -8 },
+        },
+        fail: {
+          text: "Spray soaks the line. A boot finds slick rock. You sit down harder than you meant to.",
+          hours: 2,
+          meters: { warmth: -12, energy: -8, health: -3 },
+        },
+      },
+      {
+        id: "fill",
+        label: "Fill skins and keep off the ice",
+        outcome: { text: "The best water on the mountain, and it does not charge you in drowning.", hours: 1, inventory: { water: 2 } },
+      },
+    ],
+  },
 ];
