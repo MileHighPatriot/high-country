@@ -3,6 +3,24 @@ export type Weather = "clear" | "wind" | "snow" | "blizzard" | "storm";
 export type Trait = "eye" | "grit" | "savvy" | "hands";
 export type Kit = "rations" | "powder" | "coat";
 export type RangeBand = "far" | "near" | "close";
+export type TimeBand = "night" | "dawn" | "morning" | "afternoon" | "dusk";
+export type EncounterTrigger =
+  | "search"
+  | "arrive"
+  | "wait"
+  | "eat"
+  | "drink"
+  | "fire"
+  | "hunt"
+  | "scout"
+  | "sleep"
+  | "fish"
+  | "mend"
+  | "pray"
+  | "snares"
+  | "shelter"
+  | "camp";
+export type LocationTag = "water" | "wood" | "shelter" | "game" | "trade";
 export type DeathCause =
   | "starvation"
   | "thirst"
@@ -126,6 +144,16 @@ export type GameAction =
   | { type: "makeFire" }
   | { type: "gatherWater" }
   | { type: "gatherWood" }
+  | { type: "hunt" }
+  | { type: "fish" }
+  | { type: "scout" }
+  | { type: "mend" }
+  | { type: "checkSnares" }
+  | { type: "cache" }
+  | { type: "tendFire" }
+  | { type: "shelterUp" }
+  | { type: "pray" }
+  | { type: "restWatch" }
   | { type: "encounterChoice"; optionId: string }
   | { type: "skirmish"; move: SkirmishMove };
 
@@ -156,6 +184,15 @@ export interface Outcome {
   presentCharacter?: CharacterId | null;
   death?: { cause: DeathCause; detail: string };
   markDialogue?: string;
+  /** A choice can turn the wind or let a storm arrive. */
+  weather?: Weather;
+  /** Force a move (chase, flee, follow smoke). */
+  relocate?: LocationId;
+  /** After resolving, immediately begin this encounter if it exists. */
+  followUpEncounter?: EncounterId;
+  clearFire?: boolean;
+  /** Extra sentence; concatenated onto `text` when applying. */
+  scene?: string;
 }
 
 export interface EncounterChoice {
@@ -176,6 +213,11 @@ export interface EncounterDef {
   weight?: number;
   text: string;
   choices: EncounterChoice[];
+  timeBands?: TimeBand[];
+  locationTags?: LocationTag[];
+  triggers?: EncounterTrigger[];
+  /** If true, `seenEncounterIds` will not block this beat. Default false. */
+  repeatable?: boolean;
 }
 
 export interface Connection {
@@ -189,7 +231,7 @@ export interface LocationDef {
   name: string;
   art: string;
   blurb: string;
-  tags: Array<"water" | "wood" | "shelter" | "game" | "trade">;
+  tags: LocationTag[];
   connections: Connection[];
 }
 
@@ -217,3 +259,12 @@ export interface CharacterDef {
 export const DAYS_PER_SEASON = 30;
 export const DAYS_PER_YEAR = 120;
 export const METER_MAX = 100;
+
+export function timeBand(hour: number): TimeBand {
+  const h = ((hour % 24) + 24) % 24;
+  if (h >= 20 || h <= 4) return "night";
+  if (h <= 7) return "dawn";
+  if (h <= 11) return "morning";
+  if (h <= 16) return "afternoon";
+  return "dusk";
+}
