@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Libre_Baskerville, Source_Serif_4 } from "next/font/google";
+import { AmbientMusic } from "@/components/game/ambient-music";
 import "./globals.css";
 
 const serif = Source_Serif_4({
@@ -23,7 +24,10 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
     <html lang="en" className={`${serif.variable} ${heading.variable} dark h-full antialiased`}>
-      <body className="min-h-full bg-background text-foreground">{children}</body>
+      <body className="min-h-full bg-background text-foreground">
+        <AmbientMusic />
+        {children}
+      </body>
     </html>
   );
 }
