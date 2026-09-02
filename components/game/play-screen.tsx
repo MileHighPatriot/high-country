@@ -18,6 +18,7 @@ import { CHARACTER_BY_ID } from "@/lib/game/content/characters";
 import { LOCATION_BY_ID } from "@/lib/game/content/locations";
 import { loadGame, saveGame } from "@/lib/game/save";
 import type { Choice, GameState, Kit } from "@/lib/game/types";
+import { withBase } from "@/lib/paths";
 
 function Meter({ label, value, warn }: { label: string; value: number; warn?: boolean }) {
   return (
@@ -129,7 +130,7 @@ export function PlayScreen() {
   if (state.dead) {
     return (
       <div className="relative min-h-dvh text-stone-100">
-        <div className="absolute inset-0 bg-cover bg-center" style={{ backgroundImage: "url(/art/death.jpg)" }} />
+        <div className="absolute inset-0 bg-cover bg-center" style={{ backgroundImage: `url(${withBase("/art/death.jpg")})` }} />
         <div className="absolute inset-0 bg-black/65" />
         <div className="relative z-10 mx-auto flex min-h-dvh max-w-xl flex-col justify-end gap-4 px-5 py-12">
           <p className="text-xs tracking-[0.3em] text-red-200/80 uppercase">You died</p>

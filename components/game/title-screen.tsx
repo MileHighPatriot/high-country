@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { clearSave, loadBest, loadGame, loadLastDeath } from "@/lib/game/save";
 import type { DeathRecord, Kit } from "@/lib/game/types";
+import { withBase } from "@/lib/paths";
 
 const KITS: { id: Kit; title: string; copy: string }[] = [
   {
@@ -49,7 +50,7 @@ export function TitleScreen() {
     <div className="relative min-h-dvh overflow-hidden text-stone-100">
       <div
         className="absolute inset-0 bg-cover bg-center"
-        style={{ backgroundImage: "url(/art/title.jpg)" }}
+        style={{ backgroundImage: `url(${withBase("/art/title.jpg")})` }}
       />
       <div className="absolute inset-0 bg-gradient-to-t from-black via-black/70 to-black/30" />
       <div className="relative z-10 mx-auto flex min-h-dvh max-w-3xl flex-col justify-end gap-6 px-5 py-10 sm:justify-center">

@@ -2,6 +2,7 @@ import { CHARACTER_BY_ID, CHARACTERS } from "@/lib/game/content/characters";
 import { choreEncounter, choreKindFromId, forageOutcome, waitFlavor } from "@/lib/game/content/chores";
 import { allEncounters } from "@/lib/game/content/index";
 import { LOCATION_BY_ID } from "@/lib/game/content/locations";
+import { withBase } from "@/lib/paths";
 import type {
   CharacterId,
   Choice,
@@ -1077,9 +1078,10 @@ export function artFor(state: GameState): { location: string; portrait: string |
       : state.weather === "storm"
         ? "/art/atmosphere/storm.jpg"
         : `/art/atmosphere/${state.season}.jpg`;
+  const portrait = person?.art ?? state.skirmish?.foes[0]?.art ?? null;
   return {
-    location: loc?.art ?? "/art/locations/high-camp.jpg",
-    portrait: person?.art ?? state.skirmish?.foes[0]?.art ?? null,
-    atmosphere,
+    location: withBase(loc?.art ?? "/art/locations/high-camp.jpg"),
+    portrait: portrait ? withBase(portrait) : null,
+    atmosphere: withBase(atmosphere),
   };
 }
