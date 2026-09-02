@@ -46,17 +46,6 @@ function timeGrade(hour: number) {
   }
 }
 
-const SPOT_POS: Record<string, { left: string; top: string }> = {
-  "camp-pitch": { left: "46%", top: "44%" },
-  "camp-lean": { left: "18%", top: "30%" },
-  "camp-fire": { left: "34%", top: "58%" },
-  "camp-wood": { left: "14%", top: "62%" },
-  "camp-cache": { left: "70%", top: "56%" },
-  "camp-rack": { left: "76%", top: "36%" },
-  "camp-pot": { left: "46%", top: "68%" },
-  "camp-strike": { left: "82%", top: "74%" },
-};
-
 function Meter({ label, value, warn }: { label: string; value: number; warn?: boolean }) {
   return (
     <div className="space-y-1">
@@ -203,12 +192,7 @@ export function PlayScreen() {
   const travel = choices.filter((c) => c.action.type === "travel");
   const spots = !state.activeEncounterId && !state.skirmish ? campHotspots(state) : [];
   const spotIds = new Set(spots.map((s) => s.id));
-  const restAll = choices.filter((c) => c.action.type !== "travel");
-  const campInMenu = restAll.filter((c) => spotIds.has(c.id));
-  const rest = [
-    ...restAll.filter((c) => !spotIds.has(c.id)),
-    ...campInMenu.slice(0, 2),
-  ];
+  const rest = choices.filter((c) => c.action.type !== "travel" && !spotIds.has(c.id));
 
   return (
     <div className="relative min-h-dvh overflow-hidden text-stone-100">
@@ -231,7 +215,7 @@ export function PlayScreen() {
               <img src={art.portrait} alt="" className="h-full w-full object-cover" />
             </div>
           )}
-          <div className="max-h-[40vh] space-y-3 overflow-y-auto pr-1 text-[15px] leading-relaxed sm:max-h-[46vh] sm:text-base">
+          <div className="relative z-20 max-h-[40vh] space-y-3 overflow-y-auto rounded-lg bg-black/40 px-3 py-3 pr-2 text-[15px] leading-relaxed backdrop-blur-sm sm:max-h-[46vh] sm:text-base">
             {(state.skirmish ? state.log.slice(-6) : state.log.slice(-2)).map((entry) => (
               <div key={entry.id}>
                 <p>{entry.text}</p>
@@ -246,26 +230,9 @@ export function PlayScreen() {
             ))}
           </div>
           {spots.length > 0 && (
-            <>
-              <div className="pointer-events-none absolute inset-0 z-[5] max-lg:hidden">
-                {spots.map((c) => {
-                  const pos = SPOT_POS[c.id] ?? { left: "50%", top: "50%" };
-                  return (
-                    <button
-                      key={`pin-${c.id}`}
-                      type="button"
-                      disabled={c.disabled}
-                      title={c.hint ?? c.label}
-                      onClick={() => act(c)}
-                      className="pointer-events-auto absolute max-w-[10rem] -translate-x-1/2 -translate-y-1/2 rounded-full border border-amber-100/40 bg-black/55 px-3 py-1.5 text-left text-[12px] leading-snug text-amber-50 shadow-lg backdrop-blur-sm transition hover:border-amber-200/80 hover:bg-black/75 disabled:opacity-40"
-                      style={{ left: pos.left, top: pos.top }}
-                    >
-                      {c.label}
-                    </button>
-                  );
-                })}
-              </div>
-              <div className="flex flex-wrap gap-2 lg:hidden">
+            <div className="relative z-20 space-y-2">
+              <p className="text-[11px] tracking-[0.25em] text-amber-100/60 uppercase">Camp</p>
+              <div className="flex flex-wrap gap-2">
                 {spots.map((c) => (
                   <Button
                     key={`spot-${c.id}`}
@@ -279,7 +246,7 @@ export function PlayScreen() {
                   </Button>
                 ))}
               </div>
-            </>
+            </div>
           )}
           <div className="flex flex-wrap gap-2">
             {rest.map((c) => (
