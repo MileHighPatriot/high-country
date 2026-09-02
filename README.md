@@ -23,3 +23,13 @@ Your run saves in the browser. Death ends it. The title screen keeps your longes
 - Photoreal location plates, portraits, and weather
 
 No account. No server. No way out except the mountain.
+
+## Grok Build
+
+This repo is set up so a Cursor agent can hand content and engine work to **Grok Build on the terminal** (`grok`), not the app.
+
+On this cloud machine the CLI is installed at `~/.grok/bin/grok` and signed in. A new machine needs `grok login --device-code` (or `XAI_API_KEY`) once. Then:
+
+```bash
+grok -p "add ten unique winter encounters to lib/game/content/encounters-winter.ts" --always-approve --max-turns 40
+```
