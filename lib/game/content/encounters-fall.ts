@@ -1602,4 +1602,60 @@ export const FALL_ENCOUNTERS: EncounterDef[] = [
       },
     ],
   },
+  {
+    id: "fal-fall-sheep",
+    season: "fall",
+    locations: ["frozen-fall"],
+    text: "A ewe is down on the ice lip, one leg wrong, flock already a rumor up the park. First ice. The fall is growing a beard around her.",
+    choices: [
+      {
+        id: "mercy",
+        label: "Finish it and take the meat",
+        check: { trait: "hands", dc: 12 },
+        success: {
+          text: "Ugly work on slick stone. You pack what will keep and leave the rest to the ravens, who have been waiting politely.",
+          hours: 3,
+          inventory: { rations: 2, pelts: 1 },
+          meters: { energy: -12, warmth: -10 },
+        },
+        fail: {
+          text: "The ice lets go a pane. You keep the knife and lose the hour. The ewe is already gone to the pool.",
+          hours: 2,
+          meters: { warmth: -16, energy: -8, health: -4 },
+        },
+      },
+      {
+        id: "leave",
+        label: "Leave her to the fall",
+        outcome: { text: "Some meat is priced in a drowning. You still have dry wool.", hours: 1 },
+      },
+    ],
+  },
+  {
+    id: "fal-hot-last-path",
+    season: "fall",
+    locations: ["hot-spring"],
+    text: "The path into the spring is a slick of packed snow over mud. One more freeze and it will be a chute. White Shell’s herb-bed is already wrapped for the year.",
+    choices: [
+      {
+        id: "mark",
+        label: "Cairn the safe line before it vanishes",
+        outcome: {
+          text: "You stack rock where a fool would step wrong. January may still kill you. It will have to work for it.",
+          hours: 2,
+          meters: { energy: -8, warmth: -6 },
+          extraAdd: "spring-cairn",
+        },
+      },
+      {
+        id: "soak",
+        label: "A last soak, then go",
+        outcome: {
+          text: "Heat unknots what the week tied. You dress before stupidity sets in. The path watches you leave.",
+          hours: 2,
+          meters: { warmth: 18, health: 6, energy: 6 },
+        },
+      },
+    ],
+  },
 ];

@@ -1906,4 +1906,122 @@ export const SUMMER_ENCOUNTERS: EncounterDef[] = [
       },
     ],
   },
+  {
+    id: "sum-arapaho-shade",
+    season: "summer",
+    locations: ["arapaho-ground"],
+    text: "Noon on the park is a skillet. A strip of willow shade holds three horses and a boy who has already decided you are slow weather.",
+    choices: [
+      {
+        id: "edge",
+        label: "Sit the edge until you are spoken to",
+        outcome: {
+          text: "The boy fetches Nawat, or Nawat fetches himself. Shade is a kind of treaty if you do not walk into it unasked.",
+          hours: 2,
+          meters: { energy: 6, thirst: -6 },
+          presentCharacter: "nawat",
+        },
+      },
+      {
+        id: "cut",
+        label: "Cut across for time",
+        check: { trait: "savvy", dc: 13 },
+        success: {
+          text: "You keep to the old trail and do not look like a thief. The park lets you be a cloud.",
+          hours: 2,
+          meters: { energy: -8, thirst: -10 },
+        },
+        fail: {
+          text: "You are turned with a look. The park is not a road. You learn it in your feet.",
+          hours: 1,
+          standing: { id: "nawat", delta: -2 },
+        },
+      },
+    ],
+  },
+  {
+    id: "sum-chute-rattler",
+    season: "summer",
+    locations: ["avalanche-chute"],
+    text: "The only shade on the chute is a boulder the size of a cabin. Under it, a sound like dry beans in a tin. The snake has the better claim.",
+    choices: [
+      {
+        id: "wide",
+        label: "Take the sun and leave the rock",
+        outcome: { text: "Pride can burn. You still have a leg that works. The chute keeps its tenant.", hours: 1, meters: { thirst: -8 } },
+      },
+      {
+        id: "stick",
+        label: "Move it with a stick",
+        check: { trait: "hands", dc: 13 },
+        success: {
+          text: "It goes, insulted. You take the shade for twenty minutes and call it medicine.",
+          hours: 1,
+          meters: { energy: 6, thirst: -4 },
+        },
+        fail: {
+          text: "The stick is shorter than the argument. You jump wrong. The fangs find boot, not calf, which is the whole luck of the day.",
+          hours: 1,
+          meters: { energy: -8, health: -4 },
+        },
+      },
+    ],
+  },
+  {
+    id: "sum-fall-pack",
+    season: "summer",
+    locations: ["frozen-fall"],
+    text: "A packsaddle is wedged in the rocks under the spray, leather black, one pannier still buckled. Whoever lost it went on or went under. The fall does not say which.",
+    choices: [
+      {
+        id: "haul",
+        label: "Haul it out",
+        check: { trait: "grit", dc: 12 },
+        success: {
+          text: "Cornmeal gone to paste, a shoeing hammer, a letter addressed to Bent’s that the water has already read. You take the hammer and a handful that will still cook.",
+          hours: 2,
+          inventory: { rations: 1 },
+          extraAdd: "shoeing-hammer",
+          meters: { energy: -10, warmth: -6 },
+        },
+        fail: {
+          text: "Spray and slick rock. You keep your bones and lose the hour. The saddle stays a monument.",
+          hours: 2,
+          meters: { energy: -10, warmth: -8 },
+        },
+      },
+      {
+        id: "leave",
+        label: "Leave it to the fall",
+        outcome: { text: "Someone’s luck is still in the rocks. You do not inherit it.", hours: 1 },
+      },
+    ],
+  },
+  {
+    id: "sum-cave-cool",
+    season: "summer",
+    locations: ["talus-ice-cave"],
+    text: "Bats stitch the mouth of the talus throat. Inside, last winter is a dirty tongue of ice. The heat outside is a fist. The dark is a root cellar that forgot the house.",
+    choices: [
+      {
+        id: "sit",
+        label: "Sit the cool an hour and do not sleep",
+        outcome: {
+          text: "Sweat dries. The bats ignore you. You come out able to walk the next pitch without seeing spots.",
+          hours: 2,
+          meters: { energy: 10, warmth: -6, thirst: 4 },
+        },
+      },
+      {
+        id: "ice",
+        label: "Melt a skin off the ice",
+        outcome: {
+          text: "Slow work. Clean water. Your hands go stupid with cold and then forgive you.",
+          hours: 2,
+          inventory: { water: 2 },
+          meters: { warmth: -10, thirst: 12 },
+        },
+      },
+    ],
+  },
 ];

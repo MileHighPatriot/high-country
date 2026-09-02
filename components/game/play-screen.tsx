@@ -65,6 +65,11 @@ function Status({ state }: { state: GameState }) {
         <span>Powder {state.inventory.powder}</span>
         <span>{state.inventory.coat ? "Wool coat" : "No coat"}</span>
       </div>
+      {state.inventory.extras.length > 0 && (
+        <p className="text-[11px] leading-snug text-stone-400">
+          {state.inventory.extras.map((e) => e.replace(/-/g, " ")).join(" · ")}
+        </p>
+      )}
       <p className="text-xs text-stone-400">
         Eye {state.traits.eye} · Grit {state.traits.grit} · Savvy {state.traits.savvy} · Hands {state.traits.hands}
       </p>

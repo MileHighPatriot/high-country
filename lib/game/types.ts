@@ -107,6 +107,8 @@ export interface GameState {
   log: LogEntry[];
   skirmish: SkirmishState | null;
   campfire: boolean;
+  /** Hours of burn left. Missing on older saves — treat a live fire as a few hours remaining. */
+  campfireHours?: number;
   dead: DeathRecord | null;
   rngSeed: number;
 }
@@ -195,6 +197,8 @@ export interface DialogueNode {
   id: string;
   seasons?: Season[];
   minStanding?: number;
+  requiresExtra?: string;
+  unlessExtra?: string;
   text: string;
   choices: EncounterChoice[];
 }
