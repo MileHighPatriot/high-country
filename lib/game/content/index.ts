@@ -1,4 +1,5 @@
 import type { EncounterDef } from "@/lib/game/types";
+import { CONDITION_ENCOUNTERS } from "@/lib/game/content/encounters-conditions";
 import { FALL_ENCOUNTERS } from "@/lib/game/content/encounters-fall";
 import { SPRING_ENCOUNTERS } from "@/lib/game/content/encounters-spring";
 import { SUMMER_ENCOUNTERS } from "@/lib/game/content/encounters-summer";
@@ -17,6 +18,7 @@ export function allEncounters(): EncounterDef[] {
       ...SUMMER_ENCOUNTERS,
       ...FALL_ENCOUNTERS,
       ...WINTER_ENCOUNTERS,
+      ...CONDITION_ENCOUNTERS,
     ];
   }
   return cache;

@@ -1,5 +1,23 @@
+import {
+  cacheCopy,
+  campChoices,
+  drinkCopy,
+  eatCopy,
+  fireCopy,
+  fishCopy,
+  hasShelter,
+  huntCopy,
+  mendCopy,
+  prayCopy,
+  restWatchCopy,
+  scoutCopy,
+  shelterCopy,
+  sleepCopy,
+  snaresCopy,
+  tendCopy,
+} from "@/lib/game/content/actions";
 import { CHARACTER_BY_ID, CHARACTERS } from "@/lib/game/content/characters";
-import { choreEncounter, choreKindFromId, forageOutcome, waitFlavor } from "@/lib/game/content/chores";
+import { arrivalParagraph, choreEncounter, choreKindFromId, forageOutcome, waitFlavor } from "@/lib/game/content/chores";
 import { allEncounters } from "@/lib/game/content/index";
 import { LOCATION_BY_ID } from "@/lib/game/content/locations";
 import { withBase } from "@/lib/paths";
@@ -9,6 +27,7 @@ import type {
   DeathCause,
   EncounterChoice,
   EncounterDef,
+  EncounterTrigger,
   GameAction,
   GameState,
   Kit,
@@ -24,7 +43,7 @@ import type {
   Trait,
   Weather,
 } from "@/lib/game/types";
-import { DAYS_PER_SEASON, DAYS_PER_YEAR, METER_MAX } from "@/lib/game/types";
+import { DAYS_PER_SEASON, DAYS_PER_YEAR, METER_MAX, timeBand } from "@/lib/game/types";
 
 function clamp(n: number, min = 0, max = METER_MAX) {
   return Math.max(min, Math.min(max, n));
@@ -109,6 +128,8 @@ function drainForHour(state: GameState): Partial<Meters> {
   if (state.campfire) warmth -= 6;
   const loc = LOCATION_BY_ID[state.locationId];
   if (loc?.tags.includes("shelter")) warmth -= 2;
+  if (state.inventory.extras.includes("dry-boots")) warmth -= 3;
+  if (state.inventory.extras.includes("snow-hole")) warmth -= 3;
   return {
     hunger: 1,
     thirst: 2,
@@ -152,11 +173,20 @@ function decayHealth(meters: Meters) {
 
 function appendLog(state: GameState, text: string, roll?: RollResult): GameState {
   const entry: LogEntry = {
-    id: `${state.rngSeed}-${state.log.length}`,
+    id: `${state.rngSeed}-${state.hour}-${text.length}-${roll ? "r" : "s"}`,
     text,
     roll,
   };
-  return { ...state, log: [...state.log.slice(-14), entry] };
+  // Combat is a sequence of lines for one click; camp is one beat.
+  if (state.skirmish) {
+    return { ...state, log: [...state.log, entry].slice(-8) };
+  }
+  const last = state.log[state.log.length - 1];
+  if (last) {
+    if (roll && !last.roll) return { ...state, log: [last, entry] };
+    if (!roll && last.roll) return { ...state, log: [last, entry] };
+  }
+  return { ...state, log: [entry] };
 }
 
 function rollPenalty(state: GameState): number {
@@ -269,6 +299,29 @@ function applyOutcome(state: GameState, outcome: Outcome): GameState {
     next.seenDialogueIds.push(outcome.markDialogue);
   }
   if (outcome.hours) next = advanceTime(next, outcome.hours);
+  if (outcome.weather) {
+    next.weather = outcome.weather;
+    if (outcome.weather === "blizzard" && !next.inventory.extras.includes("fatwood")) {
+      next.campfire = false;
+      next.campfireHours = 0;
+    }
+  }
+  if (outcome.clearFire) {
+    next.campfire = false;
+    next.campfireHours = 0;
+  }
+  if (outcome.relocate) {
+    next.locationId = outcome.relocate;
+    if (!next.knownLocations.includes(outcome.relocate)) {
+      next.knownLocations.push(outcome.relocate);
+    }
+    next.campfire = false;
+    next.campfireHours = 0;
+    next.inventory.extras = next.inventory.extras.filter((e) => e !== "snow-hole");
+    if (outcome.presentCharacter === undefined) next.presentCharacterId = null;
+  }
+  const beat = outcome.scene ? `${outcome.text} ${outcome.scene}` : outcome.text;
+  next = appendLog(next, beat);
   if (outcome.startSkirmish && !next.dead) {
     next.skirmish = {
       ...outcome.startSkirmish,
@@ -278,7 +331,6 @@ function applyOutcome(state: GameState, outcome: Outcome): GameState {
     };
     next.activeEncounterId = null;
   }
-  next = appendLog(next, outcome.text);
   if (outcome.death && !next.dead) {
     next.dead = {
       cause: outcome.death.cause,
@@ -286,6 +338,12 @@ function applyOutcome(state: GameState, outcome: Outcome): GameState {
       daysSurvived: next.daysSurvived,
       season: next.season,
     };
+  }
+  if (outcome.followUpEncounter && !next.dead && !next.skirmish) {
+    const follow = allEncounters().find((e) => e.id === outcome.followUpEncounter);
+    if (follow && (follow.repeatable || !next.seenEncounterIds.includes(follow.id))) {
+      next = beginEncounter(next, follow);
+    }
   }
   next = finalizeHealth(next, !outcome.hours);
   return next;
@@ -390,8 +448,8 @@ export function advanceTime(state: GameState, hours: number): GameState {
   return next;
 }
 
-function matchesEncounter(enc: EncounterDef, state: GameState): boolean {
-  if (state.seenEncounterIds.includes(enc.id)) return false;
+function matchesEncounter(enc: EncounterDef, state: GameState, kind?: EncounterTrigger): boolean {
+  if (!enc.repeatable && state.seenEncounterIds.includes(enc.id)) return false;
   if (enc.season) {
     const seasons = Array.isArray(enc.season) ? enc.season : [enc.season];
     if (!seasons.includes(state.season)) return false;
@@ -401,15 +459,27 @@ function matchesEncounter(enc: EncounterDef, state: GameState): boolean {
   }
   if (enc.weather && !enc.weather.includes(state.weather)) return false;
   if (enc.characterId && enc.characterId !== state.presentCharacterId) return false;
+  if (enc.timeBands && !enc.timeBands.includes(timeBand(state.hour))) return false;
+  if (enc.locationTags) {
+    const loc = LOCATION_BY_ID[state.locationId];
+    if (!enc.locationTags.some((t) => loc?.tags.includes(t))) return false;
+  }
+  if (kind && enc.triggers && enc.triggers.length > 0 && !enc.triggers.includes(kind)) return false;
   return true;
 }
 
-function pickEncounter(state: GameState, kind: "search" | "arrive" | "wait"): EncounterDef {
-  const pool = allEncounters().filter((e) => matchesEncounter(e, state));
-  if (pool.length === 0) return choreEncounter(state, kind);
+function pickEncounter(state: GameState, kind: EncounterTrigger): EncounterDef {
+  const pool = allEncounters().filter((e) => matchesEncounter(e, state, kind));
+  const choreKind = kind === "search" || kind === "arrive" || kind === "wait" ? kind : "wait";
+  if (pool.length === 0) return choreEncounter(state, choreKind);
   const rng = mulberry32(state.rngSeed + kind.length * 17);
-  // Place-bound beats before generic "any" oneshots, so a location still has a story.
-  const weights = pool.map((e) => e.weight ?? (e.locations === "any" || !e.locations ? 1 : 2));
+  const band = timeBand(state.hour);
+  const weights = pool.map((e) => {
+    let w = e.weight ?? (e.locations === "any" || !e.locations ? 1 : 2);
+    if (e.triggers?.includes(kind)) w += 3;
+    if (e.timeBands?.includes(band)) w += 1;
+    return w;
+  });
   const total = weights.reduce((a, b) => a + b, 0);
   let n = rng() * total;
   for (let i = 0; i < pool.length; i++) {
@@ -424,7 +494,7 @@ function isUniqueStory(enc: EncounterDef) {
 }
 
 function beginEncounter(state: GameState, enc: EncounterDef): GameState {
-  const mark = isUniqueStory(enc);
+  const mark = isUniqueStory(enc) && !enc.repeatable;
   const seen =
     !mark || state.seenEncounterIds.includes(enc.id)
       ? state.seenEncounterIds
@@ -437,6 +507,16 @@ function beginEncounter(state: GameState, enc: EncounterDef): GameState {
   };
   if (enc.characterId) next.presentCharacterId = enc.characterId;
   next = appendLog(next, enc.text);
+  return next;
+}
+
+function maybeRipple(state: GameState, kind: EncounterTrigger, chance: number): GameState {
+  if (state.dead || state.skirmish) return state;
+  const enc = pickEncounter(state, kind);
+  if (!isUniqueStory(enc)) return state;
+  const rng = mulberry32(state.rngSeed);
+  const next = { ...state, rngSeed: nextSeed(state.rngSeed) };
+  if (rng() < chance) return beginEncounter(next, enc);
   return next;
 }
 
@@ -605,6 +685,10 @@ function travel(state: GameState, to: LocationId): GameState {
     campfireHours: 0,
     presentCharacterId: null,
     activeEncounterId: null,
+    inventory: {
+      ...state.inventory,
+      extras: state.inventory.extras.filter((e) => e !== "snow-hole"),
+    },
   };
   next = advanceTime(next, hours);
   if (next.dead) {
@@ -613,11 +697,7 @@ function travel(state: GameState, to: LocationId): GameState {
   next.locationId = to;
   if (!next.knownLocations.includes(to)) next.knownLocations = [...next.knownLocations, to];
   next = maybePresentCharacter(next);
-  const dest = LOCATION_BY_ID[to];
-  next = appendLog(
-    next,
-    `You take ${edge.trailName} and come into ${dest?.name ?? to}. ${dest?.blurb ?? ""}`,
-  );
+  next = appendLog(next, arrivalParagraph(next, to, edge.trailName));
   const fallRng = mulberry32(next.rngSeed);
   next = { ...next, rngSeed: nextSeed(next.rngSeed) };
   if (next.weather === "blizzard" && fallRng() < 0.15) {
@@ -628,15 +708,14 @@ function travel(state: GameState, to: LocationId): GameState {
     });
   }
   const enc = pickEncounter(next, "arrive");
-  if (isUniqueStory(enc) && mulberry32(next.rngSeed)() < 0.72) {
+  if (isUniqueStory(enc) && mulberry32(next.rngSeed)() < 0.8) {
     return beginEncounter(next, enc);
   }
   return next;
 }
 
 function sleep(state: GameState): GameState {
-  const loc = LOCATION_BY_ID[state.locationId];
-  const shelter = loc?.tags.includes("shelter") || state.locationId === "high-camp";
+  const shelter = hasShelter(state);
   const fire = state.campfire;
   const hours = 8;
   let next = advanceTime(state, hours);
@@ -644,6 +723,7 @@ function sleep(state: GameState): GameState {
     return appendLog(next, "You lie down. The mountain does the rest.");
   }
   next.meters = { ...next.meters };
+  next.inventory = { ...next.inventory, extras: [...next.inventory.extras] };
   next.meters.energy = clamp(next.meters.energy + (fire || shelter ? 55 : 25));
   if (fire || shelter) next.meters.warmth = clamp(next.meters.warmth + 20);
   else next.meters.warmth = clamp(next.meters.warmth - 10);
@@ -656,12 +736,29 @@ function sleep(state: GameState): GameState {
   if (!stillBurning) next.campfireHours = 0;
   next.presentCharacterId = null;
   next.activeEncounterId = null;
-  next = appendLog(
-    next,
-    fire || shelter
-      ? "You sleep in what passes for safety. Dawn is not kinder, only later."
-      : "You sleep in the open. The stars are very clear. That is not a comfort.",
-  );
+  next.inventory.extras = next.inventory.extras.filter((e) => e !== "dry-boots");
+  next = appendLog(next, sleepCopy(state));
+  const rng = mulberry32(next.rngSeed);
+  next = { ...next, rngSeed: nextSeed(next.rngSeed) };
+  if (!shelter && rng() < 0.14) {
+    if (rng() < 0.5 && next.inventory.rations > 0) {
+      next.inventory = { ...next.inventory, rations: next.inventory.rations - 1 };
+      next = maybeRipple(next, "sleep", 0.75);
+    } else {
+      const loc = LOCATION_BY_ID[state.locationId];
+      const edge = loc?.connections[Math.floor(rng() * (loc?.connections.length ?? 1))];
+      if (edge && rng() < 0.55) {
+        next.locationId = edge.to;
+        if (!next.knownLocations.includes(edge.to)) {
+          next.knownLocations = [...next.knownLocations, edge.to];
+        }
+        next.inventory.extras = next.inventory.extras.filter((e) => e !== "snow-hole");
+      }
+      next = maybeRipple(next, "sleep", 0.65);
+    }
+  } else {
+    next = maybeRipple(next, "sleep", 0.24);
+  }
   return finalizeHealth(next, true);
 }
 
@@ -689,7 +786,11 @@ function endSkirmish(state: GameState, text: string, fled = false): GameState {
 
 function resolveSkirmish(state: GameState, move: SkirmishMove): GameState {
   if (!state.skirmish) return state;
-  let next: GameState = { ...state, skirmish: { ...state.skirmish, foes: state.skirmish.foes.map((f) => ({ ...f })) } };
+  let next: GameState = {
+    ...state,
+    log: [],
+    skirmish: { ...state.skirmish, foes: state.skirmish.foes.map((f) => ({ ...f })) },
+  };
   const sk = next.skirmish!;
   const rng = mulberry32(next.rngSeed);
   next.rngSeed = nextSeed(next.rngSeed);
@@ -827,17 +928,26 @@ export function applyAction(state: GameState, action: GameAction): GameState {
   switch (action.type) {
     case "eat": {
       if (state.inventory.rations <= 0) return appendLog(state, "The bag is empty. Your stomach is not.");
-      const next = {
+      let next: GameState = {
         ...state,
         inventory: { ...state.inventory, rations: state.inventory.rations - 1 },
         meters: { ...state.meters, hunger: clamp(state.meters.hunger + 40) },
       };
-      const eats = [
-        "You eat. It is not a meal. It is a postponement.",
-        "Flour, grease, the idea of salt. You chew until the hour agrees to continue.",
-        "You eat standing, like a man who does not trust chairs.",
-      ];
-      return appendLog(advanceTime(next, 1), eats[state.daysSurvived % eats.length]!);
+      next = appendLog(advanceTime(next, 1), eatCopy(state));
+      if (timeBand(state.hour) === "dusk" && state.campfire) {
+        const rng = mulberry32(next.rngSeed);
+        next = { ...next, rngSeed: nextSeed(next.rngSeed) };
+        if (rng() < 0.38 && !next.presentCharacterId) {
+          const people = presentPeople(next);
+          next.presentCharacterId = people.length
+            ? people[Math.floor(rng() * people.length)]!.id
+            : rng() < 0.55
+              ? "silas-crowe"
+              : null;
+        }
+        return maybeRipple(next, "eat", 0.4);
+      }
+      return maybeRipple(next, "eat", 0.28);
     }
     case "drink": {
       if (state.inventory.water <= 0) return appendLog(state, "The canteen talks like a drum.");
@@ -846,12 +956,7 @@ export function applyAction(state: GameState, action: GameAction): GameState {
         inventory: { ...state.inventory, water: state.inventory.water - 1 },
         meters: { ...state.meters, thirst: clamp(state.meters.thirst + 48) },
       };
-      const drinks = [
-        "You drink. For a minute the world is simple.",
-        "The canteen lightens. Your tongue remembers it is a tool.",
-        "A swallow, then another. Thirst files a later complaint.",
-      ];
-      return appendLog(advanceTime(next, 1), drinks[(state.daysSurvived + state.hour) % drinks.length]!);
+      return maybeRipple(appendLog(advanceTime(next, 1), drinkCopy(state)), "drink", 0.22);
     }
     case "sleep":
       return sleep(state);
@@ -863,7 +968,7 @@ export function applyAction(state: GameState, action: GameAction): GameState {
       }
       let next: GameState = {
         ...state,
-        inventory: { ...state.inventory, firewood: state.inventory.firewood - 1 },
+        inventory: { ...state.inventory, firewood: state.inventory.firewood - 1, extras: [...state.inventory.extras] },
         campfire: true,
         campfireHours:
           (state.weather === "blizzard" ? 4 : 10) + (state.inventory.extras.includes("fire-drill") ? 2 : 0),
@@ -871,10 +976,34 @@ export function applyAction(state: GameState, action: GameAction): GameState {
       };
       if (state.weather === "blizzard" && fatwood) {
         next.inventory.extras = next.inventory.extras.filter((e) => e !== "fatwood");
-        next = appendLog(advanceTime(next, 1), "Pitch light, mean and holy. The blizzard does not care. You do.");
-        return next;
       }
-      return appendLog(advanceTime(next, 1), "The fire takes. You remember you have a face.");
+      next = appendLog(advanceTime(next, 1), fireCopy(state));
+      if (timeBand(state.hour) === "dusk" || timeBand(state.hour) === "night" || state.weather === "blizzard") {
+        const rng = mulberry32(next.rngSeed);
+        next = { ...next, rngSeed: nextSeed(next.rngSeed) };
+        if (rng() < 0.3 && !next.presentCharacterId) {
+          const people = presentPeople(next);
+          if (people.length) next.presentCharacterId = people[Math.floor(rng() * people.length)]!.id;
+        }
+      }
+      return maybeRipple(next, "fire", 0.34);
+    }
+    case "tendFire": {
+      if (!state.campfire) return appendLog(state, "There is no fire to tend. Ash. Opinion.");
+      const rng = mulberry32(state.rngSeed);
+      const spend = state.inventory.firewood > 0 && rng() < 0.55;
+      let next: GameState = {
+        ...state,
+        rngSeed: nextSeed(state.rngSeed),
+        inventory: { ...state.inventory },
+        meters: { ...state.meters },
+        campfire: true,
+        campfireHours: fireHoursLeft(state) + (spend ? 3 : 0),
+      };
+      if (spend) next.inventory.firewood = Math.max(0, next.inventory.firewood - 1);
+      next.meters.warmth = clamp(next.meters.warmth + (spend ? 14 : 8));
+      next = appendLog(advanceTime(next, 1), tendCopy(state));
+      return maybeRipple(next, "fire", 0.3);
     }
     case "gatherWater": {
       const loc = LOCATION_BY_ID[state.locationId];
@@ -891,6 +1020,10 @@ export function applyAction(state: GameState, action: GameAction): GameState {
         );
         if (!rolled.roll.success) {
           next.meters = { ...next.meters, health: clamp(next.meters.health - 6), warmth: clamp(next.meters.warmth - 12) };
+          next.inventory = {
+            ...next.inventory,
+            extras: next.inventory.extras.filter((e) => e !== "dry-boots"),
+          };
           next = appendLog(advanceTime(next, 2), "The ice opens a mouth. You get out. Not all of the heat comes with you.");
           return next;
         }
@@ -901,12 +1034,16 @@ export function applyAction(state: GameState, action: GameAction): GameState {
         ...state,
         inventory: { ...state.inventory, water: state.inventory.water + 2 },
       };
-      return appendLog(advanceTime(next, 1), "You fill the canteens. The water tastes of granite and luck.");
+      return maybeRipple(
+        appendLog(advanceTime(next, 1), "You fill the canteens. The water tastes of granite and luck."),
+        "drink",
+        0.18,
+      );
     }
     case "gatherWood": {
       const loc = LOCATION_BY_ID[state.locationId];
       if (!loc?.tags.includes("wood")) return appendLog(state, "This ground does not owe you timber.");
-      if (state.season === "winter" || state.weather === "blizzard") {
+      if (state.season === "winter" || state.weather === "blizzard" || timeBand(state.hour) === "night") {
         const rolled = rollCheck(state, "hands", 12);
         let next = appendLog(
           rolled.state,
@@ -929,18 +1066,184 @@ export function applyAction(state: GameState, action: GameAction): GameState {
       return appendLog(advanceTime(next, 2), "You break dead limbs until your shoulders argue. Two armfuls.");
     }
     case "wait": {
-      let next = advanceTime(state, 3);
+      const hours = state.weather === "blizzard" ? 3 : timeBand(state.hour) === "night" ? 2 : 3;
+      let next = advanceTime(state, hours);
       if (next.dead) return appendLog(next, "You wait. The weather finishes the sentence.");
+      const rng = mulberry32(next.rngSeed);
+      next = { ...next, rngSeed: nextSeed(next.rngSeed) };
+      if (state.weather === "wind" && rng() < 0.22) next.weather = "clear";
+      if (state.weather === "storm" && rng() < 0.18) next.weather = "wind";
       const enc = pickEncounter(next, "wait");
       if (isUniqueStory(enc)) return beginEncounter(next, enc);
       return appendLog(next, waitFlavor(next));
     }
+    case "restWatch": {
+      const hours = 1 + (mulberry32(state.rngSeed)() < 0.4 ? 1 : 0);
+      let next = advanceTime({ ...state, rngSeed: nextSeed(state.rngSeed) }, hours);
+      if (next.dead) return appendLog(next, "You sit down. The mountain accepts the offering.");
+      next = appendLog(next, restWatchCopy(next));
+      return maybeRipple(next, "wait", 0.18);
+    }
     case "search": {
-      let next = advanceTime(state, 2);
+      const hours = state.weather === "blizzard" ? 3 : 2;
+      let next = advanceTime(state, hours);
       if (next.dead) return appendLog(next, "You search until the ground is the last thing that holds you.");
+      if (state.weather === "blizzard") {
+        next.meters = { ...next.meters, warmth: clamp(next.meters.warmth - 8), energy: clamp(next.meters.energy - 6) };
+      }
       const enc = pickEncounter(next, "search");
       if (isUniqueStory(enc)) return beginEncounter(next, enc);
       return applyOutcome(next, forageOutcome(next));
+    }
+    case "hunt": {
+      const loc = LOCATION_BY_ID[state.locationId];
+      if (!loc?.tags.includes("game")) return appendLog(state, "This ground does not owe you a hunt.");
+      if (state.weather === "blizzard") return appendLog(state, "In this white you would hunt only your own death.");
+      const usedRifle = Boolean(state.inventory.rifle && state.inventory.powder > 0);
+      let next: GameState = usedRifle
+        ? { ...state, inventory: { ...state.inventory, powder: state.inventory.powder - 1 } }
+        : state;
+      const dc = usedRifle ? (timeBand(state.hour) === "dusk" ? 13 : 12) : 13;
+      const rolled = rollCheck(next, usedRifle ? "eye" : "hands", dc);
+      next = appendLog(
+        rolled.state,
+        `${usedRifle ? "Hunt" : "Still-hunt"} — d20 ${rolled.roll.d20} + ${rolled.roll.trait} ${rolled.roll.modifier} − ${rolled.roll.penalty} = ${rolled.roll.total} vs ${dc}.`,
+        rolled.roll,
+      );
+      const wound = !rolled.roll.success && rolled.roll.d20 <= 3;
+      next = applyOutcome(next, {
+        text:
+          huntCopy(state, rolled.roll.success, usedRifle) +
+          (wound ? " A branch, a fall, a red line on the shin." : ""),
+        hours: 3,
+        meters: rolled.roll.success
+          ? { energy: -12 }
+          : { energy: -12, health: wound ? -8 : 0 },
+        inventory: rolled.roll.success ? { rations: usedRifle ? 2 : 1, pelts: rolled.roll.d20 >= 18 ? 1 : 0 } : undefined,
+      });
+      return maybeRipple(next, "hunt", 0.36);
+    }
+    case "fish": {
+      const allowed = new Set(["creek", "frozen-fall", "beaver-meadow", "hot-spring"]);
+      if (!allowed.has(state.locationId)) return appendLog(state, "No water here that owes you a fish.");
+      if (state.weather === "blizzard") return appendLog(state, "The blizzard has the bank.");
+      const ice = state.season === "winter" || state.weather === "snow";
+      const rolled = rollCheck(state, "hands", ice ? 13 : 11);
+      let next = appendLog(
+        rolled.state,
+        `Fish — d20 ${rolled.roll.d20} + hands ${rolled.roll.modifier} − ${rolled.roll.penalty} = ${rolled.roll.total} vs ${ice ? 13 : 11}.`,
+        rolled.roll,
+      );
+      const dunk = ice && !rolled.roll.success && rolled.roll.d20 <= 4;
+      next = applyOutcome(next, {
+        text: dunk
+          ? `${fishCopy(state, false, true)} The ice opens a mouth.`
+          : fishCopy(state, rolled.roll.success, ice),
+        hours: 2,
+        inventory: rolled.roll.success && !dunk ? { rations: 1 } : undefined,
+        meters: dunk
+          ? { health: -6, warmth: -14, energy: -8 }
+          : { energy: -8, warmth: ice ? -10 : -2 },
+      });
+      return maybeRipple(next, "fish", 0.3);
+    }
+    case "scout": {
+      const night = timeBand(state.hour) === "night";
+      const rolled = rollCheck(state, "savvy", night ? 13 : 12);
+      let next = appendLog(
+        rolled.state,
+        `${night ? "Watch" : "Scout"} — d20 ${rolled.roll.d20} + savvy ${rolled.roll.modifier} − ${rolled.roll.penalty} = ${rolled.roll.total} vs ${night ? 13 : 12}.`,
+        rolled.roll,
+      );
+      const loc = LOCATION_BY_ID[state.locationId];
+      const unknown = loc?.connections.filter((c) => !state.knownLocations.includes(c.to)) ?? [];
+      const rng = mulberry32(next.rngSeed);
+      next = { ...next, rngSeed: nextSeed(next.rngSeed) };
+      const unlock = rolled.roll.success && unknown.length ? unknown[Math.floor(rng() * unknown.length)]!.to : undefined;
+      let present: CharacterId | undefined;
+      if (rolled.roll.success && rng() < 0.28) {
+        const people = presentPeople(next);
+        if (people.length) present = people[Math.floor(rng() * people.length)]!.id;
+      }
+      let weather: Weather | undefined;
+      if (rolled.roll.success && (state.locationId === "wind-saddle" || state.locationId === "south-pass") && rng() < 0.3) {
+        weather = state.season === "winter" ? "blizzard" : state.season === "summer" ? "storm" : "wind";
+      }
+      next = applyOutcome(next, {
+        text: scoutCopy(state, rolled.roll.success),
+        hours: night ? 1 : 2,
+        meters: { energy: -8 },
+        unlockLocation: unlock,
+        presentCharacter: present,
+        weather,
+      });
+      return maybeRipple(next, "scout", 0.38);
+    }
+    case "mend": {
+      const rng = mulberry32(state.rngSeed);
+      let next: GameState = {
+        ...state,
+        rngSeed: nextSeed(state.rngSeed),
+        meters: { ...state.meters, energy: clamp(state.meters.energy - 8) },
+        inventory: { ...state.inventory, extras: [...state.inventory.extras] },
+      };
+      const dry = rng() < 0.5 && (state.campfire || hasShelter(state));
+      if (dry && !next.inventory.extras.includes("dry-boots")) next.inventory.extras.push("dry-boots");
+      next = appendLog(advanceTime(next, 1), mendCopy(state, dry));
+      return maybeRipple(next, "mend", 0.28);
+    }
+    case "checkSnares": {
+      const rng = mulberry32(state.rngSeed);
+      let next: GameState = { ...state, rngSeed: nextSeed(state.rngSeed) };
+      const r = rng();
+      const kind: "meat" | "empty" | "cut" = r < 0.38 ? "meat" : r < 0.52 ? "cut" : "empty";
+      next.inventory = { ...next.inventory };
+      next.meters = { ...next.meters, energy: clamp(next.meters.energy - 6) };
+      if (kind === "meat") next.inventory.rations = next.inventory.rations + 1;
+      next = appendLog(advanceTime(next, 2), snaresCopy(state, kind));
+      return maybeRipple(next, "snares", kind === "cut" ? 0.7 : 0.28);
+    }
+    case "cache": {
+      if (state.inventory.rations < 2) return appendLog(state, "You do not have meat to spare.");
+      const where =
+        state.locationId === "cache-deadfall"
+          ? "deadfall"
+          : state.locationId === "talus-ice-cave"
+            ? "ice"
+            : "camp";
+      const extra = where === "deadfall" ? "deadfall-ticket" : where === "ice" ? "ice-cache" : "camp-cache";
+      let next: GameState = {
+        ...state,
+        inventory: {
+          ...state.inventory,
+          rations: state.inventory.rations - 2,
+          extras: [...state.inventory.extras],
+        },
+      };
+      if (!next.inventory.extras.includes(extra)) next.inventory.extras.push(extra);
+      next = appendLog(advanceTime(next, 1), cacheCopy(state, where));
+      return maybeRipple(next, "camp", 0.2);
+    }
+    case "shelterUp": {
+      let next: GameState = {
+        ...state,
+        inventory: { ...state.inventory, extras: [...state.inventory.extras] },
+        meters: {
+          ...state.meters,
+          energy: clamp(state.meters.energy - 12),
+          warmth: clamp(state.meters.warmth + 14),
+        },
+      };
+      if (!next.inventory.extras.includes("snow-hole")) next.inventory.extras.push("snow-hole");
+      next = appendLog(advanceTime(next, 2), shelterCopy(state));
+      return maybeRipple(next, "shelter", 0.3);
+    }
+    case "pray": {
+      const person = state.presentCharacterId ? CHARACTER_BY_ID[state.presentCharacterId] : null;
+      let next: GameState = { ...state, standing: { ...state.standing } };
+      if (person) next.standing[person.id] = (next.standing[person.id] ?? 0) + 1;
+      next = appendLog(advanceTime(next, 1), prayCopy(state, person?.name ?? null));
+      return maybeRipple(next, "pray", 0.4);
     }
     case "talk":
       return talk(state);
@@ -997,68 +1300,6 @@ function findDialogueEncounter(state: GameState): EncounterDef | undefined {
   const node = person.nodes.find((n) => n.id === nodeId);
   if (!node) return undefined;
   return { id: `dlg-${node.id}`, text: node.text, choices: node.choices };
-}
-
-function campChoices(state: GameState): Choice[] {
-  const loc = LOCATION_BY_ID[state.locationId];
-  const choices: Choice[] = [
-    {
-      id: "eat",
-      label: "Eat",
-      disabled: state.inventory.rations <= 0,
-      hint: state.inventory.rations <= 0 ? "No rations" : `${state.inventory.rations} left`,
-      action: { type: "eat" },
-    },
-    {
-      id: "drink",
-      label: "Drink",
-      disabled: state.inventory.water <= 0,
-      hint: state.inventory.water <= 0 ? "Canteen empty" : `${state.inventory.water} left`,
-      action: { type: "drink" },
-    },
-    { id: "sleep", label: "Sleep", action: { type: "sleep" } },
-    {
-      id: "fire",
-      label: "Make a fire",
-      disabled:
-        state.inventory.firewood <= 0 ||
-        state.campfire ||
-        (state.weather === "blizzard" && !state.inventory.extras.includes("fatwood")),
-      hint: state.campfire
-        ? "Already burning"
-        : state.weather === "blizzard" && state.inventory.extras.includes("fatwood")
-          ? "Fatwood against the blizzard"
-          : undefined,
-      action: { type: "makeFire" },
-    },
-    { id: "search", label: "Search this ground", action: { type: "search" } },
-    { id: "wait", label: "Wait out the weather", action: { type: "wait" } },
-  ];
-  if (loc?.tags.includes("water")) {
-    choices.push({ id: "water", label: "Take water", action: { type: "gatherWater" } });
-  }
-  if (loc?.tags.includes("wood")) {
-    choices.push({ id: "wood", label: "Gather wood", action: { type: "gatherWood" } });
-  }
-  if (state.presentCharacterId) {
-    const p = CHARACTER_BY_ID[state.presentCharacterId];
-    choices.unshift({
-      id: "talk",
-      label: p ? `Talk to ${p.name}` : "Talk",
-      action: { type: "talk" },
-    });
-  }
-  for (const edge of loc?.connections ?? []) {
-    const dest = LOCATION_BY_ID[edge.to];
-    const known = state.knownLocations.includes(edge.to);
-    choices.push({
-      id: `go-${edge.to}`,
-      label: known ? `Travel to ${dest?.name ?? edge.to}` : `Take ${edge.trailName}`,
-      hint: `${edge.hours}+ hours`,
-      action: { type: "travel", to: edge.to },
-    });
-  }
-  return choices;
 }
 
 export function locationName(id: LocationId) {

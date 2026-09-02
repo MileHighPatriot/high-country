@@ -171,7 +171,7 @@ export function PlayScreen() {
             </div>
           )}
           <div className="max-h-[40vh] space-y-3 overflow-y-auto pr-1 text-[15px] leading-relaxed sm:max-h-[46vh] sm:text-base">
-            {state.log.map((entry) => (
+            {(state.skirmish ? state.log.slice(-6) : state.log.slice(-2)).map((entry) => (
               <div key={entry.id}>
                 <p>{entry.text}</p>
                 {entry.roll && (
