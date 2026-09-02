@@ -26,7 +26,13 @@ Open [http://127.0.0.1:43127](http://127.0.0.1:43127). GitHub Pages publishes a 
 - About two hundred unique seasonal encounters that do not repeat in a run
 - Photoreal location plates, portraits, and weather
 
+A quiet guitar loop plays under the game. Use the Music control in the corner if you want the mountain silent.
+
 No account. No server. No way out except the mountain.
+
+## Music
+
+The bed is a softened loop of *Lone Scavenger* by vitalezzz, released as [CC0](https://opengameart.org/content/lone-scavenger).
 
 ## Grok Build
 
