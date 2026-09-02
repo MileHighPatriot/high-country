@@ -6,14 +6,18 @@ Read the ground, pick a choice, keep a fire. Hunger, thirst, warmth, energy, and
 
 ## Play
 
+**Live:** [https://milehighpatriot.github.io/high-country/](https://milehighpatriot.github.io/high-country/)
+
+Your run saves in the browser. Death ends it. The title screen keeps your longest days survived.
+
+Locally:
+
 ```bash
 npm install
 npm run dev
 ```
 
-Open [http://127.0.0.1:43127](http://127.0.0.1:43127).
-
-Your run saves in the browser. Death ends it. The title screen keeps your longest days survived.
+Open [http://127.0.0.1:43127](http://127.0.0.1:43127). GitHub Pages publishes a static build of the same game.
 
 ## What is here
 
