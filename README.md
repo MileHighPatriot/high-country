@@ -1,0 +1,25 @@
+# High Country
+
+Open-ended survival in the Colorado Rockies, around 1835 — after the beaver boom, before the gold rush. You wintered too high on the Front Range. There is no last day. Seasons cycle. You play until you die.
+
+Read the ground, pick a choice, keep a fire. Hunger, thirst, warmth, energy, and health all run out. Risky acts show an open d20 (Eye, Grit, Savvy, Hands). Violence is a short skirmish, not a dungeon.
+
+## Play
+
+```bash
+npm install
+npm run dev
+```
+
+Open [http://127.0.0.1:43127](http://127.0.0.1:43127).
+
+Your run saves in the browser. Death ends it. The title screen keeps your longest days survived.
+
+## What is here
+
+- Twenty-one connected places, from high camp to the South Park rim
+- Twenty-four recurring people and a book of one-shot strangers
+- About two hundred unique seasonal encounters that do not repeat in a run
+- Photoreal location plates, portraits, and weather
+
+No account. No server. No way out except the mountain.
