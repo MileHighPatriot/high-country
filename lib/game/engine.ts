@@ -1,4 +1,25 @@
 import {
+  addCampExtra,
+  atOwnCamp,
+  buildHours,
+  cacheCap,
+  canCook,
+  canPitch,
+  canStartJob,
+  cloneCamp,
+  emptyCamp,
+  firewoodCap,
+  jobHours,
+  jobLabel,
+  packLeftover,
+  packRoom,
+  readyJobLine,
+  recoverOnStrike,
+  spendFromPackOrCache,
+  tickCampHour,
+  WANDERERS,
+} from "@/lib/game/camp";
+import {
   cacheCopy,
   campChoices,
   drinkCopy,
@@ -20,8 +41,12 @@ import { CHARACTER_BY_ID, CHARACTERS } from "@/lib/game/content/characters";
 import { arrivalParagraph, choreEncounter, choreKindFromId, forageOutcome, waitFlavor } from "@/lib/game/content/chores";
 import { allEncounters } from "@/lib/game/content/index";
 import { LOCATION_BY_ID } from "@/lib/game/content/locations";
+import { pickOpening } from "@/lib/game/content/openings";
 import { withBase } from "@/lib/paths";
 import type {
+  CampJob,
+  CampPiece,
+  CampStowItem,
   CharacterId,
   Choice,
   DeathCause,
@@ -30,6 +55,7 @@ import type {
   EncounterTrigger,
   GameAction,
   GameState,
+  Inventory,
   Kit,
   LocationId,
   LogEntry,
@@ -43,7 +69,7 @@ import type {
   Trait,
   Weather,
 } from "@/lib/game/types";
-import { DAYS_PER_SEASON, DAYS_PER_YEAR, METER_MAX, timeBand } from "@/lib/game/types";
+import { DAYS_PER_SEASON, DAYS_PER_YEAR, METER_MAX, PACK_LIMITS, timeBand } from "@/lib/game/types";
 
 function clamp(n: number, min = 0, max = METER_MAX) {
   return Math.max(min, Math.min(max, n));
@@ -127,14 +153,16 @@ function drainForHour(state: GameState): Partial<Meters> {
   if (coat) warmth -= 2;
   if (state.campfire) warmth -= 6;
   const loc = LOCATION_BY_ID[state.locationId];
-  if (loc?.tags.includes("shelter")) warmth -= 2;
+  if (loc?.tags.includes("shelter") || (state.camp?.leanTo && atOwnCamp(state))) warmth -= 2;
   if (state.inventory.extras.includes("dry-boots")) warmth -= 3;
   if (state.inventory.extras.includes("snow-hole")) warmth -= 3;
+  if (state.inventory.extras.includes("smoked-hide")) warmth -= 2;
+  if (atOwnCamp(state) && state.camp?.cache.extras.includes("smoked-hide")) warmth -= 2;
   return {
-    hunger: 1,
-    thirst: 2,
-    energy: night ? 1 : 2,
-    warmth: Math.max(0, warmth),
+    hunger: 0.5,
+    thirst: 1,
+    energy: night ? 0.5 : 1,
+    warmth: Math.max(0, Math.round(warmth * 0.6)),
   };
 }
 
@@ -152,19 +180,19 @@ function decayHealth(meters: Meters) {
   // Fastest killers win the name if several meters are already gone.
   let cause: DeathCause | null = null;
   if (meters.energy <= 0) {
-    bite += 4;
+    bite += 2;
     cause = "exhaustion";
   }
   if (meters.hunger <= 0) {
-    bite += 6;
+    bite += 3;
     cause = "starvation";
   }
   if (meters.warmth <= 0) {
-    bite += 8;
+    bite += 4;
     cause = "exposure";
   }
   if (meters.thirst <= 0) {
-    bite += 8;
+    bite += 4;
     cause = "thirst";
   }
   if (bite) meters.health = clamp(meters.health - bite);
@@ -269,8 +297,18 @@ function applyOutcome(state: GameState, outcome: Outcome): GameState {
   next.standing = { ...next.standing };
   next.knownLocations = [...next.knownLocations];
   next.seenDialogueIds = [...next.seenDialogueIds];
+  next.memories = { ...(next.memories ?? {}) };
+  if (next.camp) next.camp = cloneCamp(next.camp);
 
-  if (outcome.meters) applyMeterDelta(next.meters, outcome.meters);
+  if (outcome.meters) {
+    const scaled: Partial<Meters> = {};
+    (Object.keys(outcome.meters) as (keyof Meters)[]).forEach((k) => {
+      const amt = outcome.meters![k];
+      if (amt == null) return;
+      scaled[k] = amt < 0 ? Math.round(amt * 0.5) : amt;
+    });
+    applyMeterDelta(next.meters, scaled);
+  }
   if (outcome.inventory) {
     for (const [k, v] of Object.entries(outcome.inventory)) {
       if (v == null) continue;
@@ -297,6 +335,11 @@ function applyOutcome(state: GameState, outcome: Outcome): GameState {
   }
   if (outcome.markDialogue && !next.seenDialogueIds.includes(outcome.markDialogue)) {
     next.seenDialogueIds.push(outcome.markDialogue);
+  }
+  if (outcome.remember) {
+    const { id, tag } = outcome.remember;
+    const list = next.memories[id] ?? [];
+    if (!list.includes(tag)) next.memories = { ...next.memories, [id]: [...list, tag] };
   }
   if (outcome.hours) next = advanceTime(next, outcome.hours);
   if (outcome.weather) {
@@ -404,16 +447,21 @@ function fireHoursLeft(state: GameState): number {
 export function advanceTime(state: GameState, hours: number): GameState {
   if (hours <= 0) return state;
   let next = { ...state, meters: { ...state.meters } };
+  if (next.camp) next.camp = cloneCamp(next.camp);
   let burning = fireHoursLeft(next);
   if (burning > 0) next.campfire = true;
+  let campNotes: string[] = [];
   for (let i = 0; i < hours; i++) {
     if (next.dead) break;
     applyMeterDelta(next.meters, drainForHour(next), true);
+    const fireAtCamp = Boolean(next.campfire && atOwnCamp(next));
     next.hour += 1;
+    let newDay = false;
     if (next.hour >= 24) {
       next.hour = 0;
       next.dayOfYear += 1;
       next.daysSurvived += 1;
+      newDay = true;
       if (next.dayOfYear >= DAYS_PER_YEAR) {
         next.dayOfYear = 0;
         next.year += 1;
@@ -443,7 +491,23 @@ export function advanceTime(state: GameState, hours: number): GameState {
       }
     }
     next.campfireHours = burning;
+    if (next.camp) {
+      const rng = mulberry32(next.rngSeed + next.hour + i * 19);
+      const ticked = tickCampHour(next.camp, {
+        fireAtCamp,
+        blizzard: next.weather === "blizzard",
+        newDay,
+        atCamp: atOwnCamp(next),
+        rng,
+      });
+      next.camp = ticked.camp;
+      campNotes = campNotes.concat(ticked.notes);
+      next.rngSeed = nextSeed(next.rngSeed);
+    }
     next = finalizeHealth(next, true);
+  }
+  if (next.camp && campNotes.includes("ravens")) {
+    next.camp = addCampExtra(next.camp, "raven-theft");
   }
   return next;
 }
@@ -465,6 +529,9 @@ function matchesEncounter(enc: EncounterDef, state: GameState, kind?: EncounterT
     if (!enc.locationTags.some((t) => loc?.tags.includes(t))) return false;
   }
   if (kind && enc.triggers && enc.triggers.length > 0 && !enc.triggers.includes(kind)) return false;
+  if (enc.id.startsWith("camp-") && (!state.camp || state.camp.locationId !== state.locationId)) {
+    return false;
+  }
   return true;
 }
 
@@ -530,26 +597,114 @@ function getActiveEncounter(state: GameState): EncounterDef | undefined {
   return undefined;
 }
 
-function presentPeople(state: GameState) {
+function inSeason(c: (typeof CHARACTERS)[number], state: GameState) {
+  return c.seasons === "all" || c.seasons.includes(state.season);
+}
+
+function inHours(c: (typeof CHARACTERS)[number], hour: number) {
+  if (!c.hours || c.hours.length === 0) return true;
+  return c.hours.includes(timeBand(hour));
+}
+
+function presentPeople(state: GameState, opts?: { ignoreHours?: boolean }) {
   return CHARACTERS.filter((c) => {
     if (!c.home.includes(state.locationId)) return false;
-    if (c.seasons !== "all" && !c.seasons.includes(state.season)) return false;
+    if (!inSeason(c, state)) return false;
+    if (!opts?.ignoreHours && !inHours(c, state.hour)) return false;
     return true;
   });
 }
 
-function maybePresentCharacter(state: GameState): GameState {
-  const people = presentPeople(state);
-  if (people.length === 0) return { ...state, presentCharacterId: null };
+function smokeVisitorPool(state: GameState) {
+  const loc = LOCATION_BY_ID[state.locationId];
+  const nearby = new Set<LocationId>([state.locationId, ...(loc?.connections.map((e) => e.to) ?? [])]);
+  return CHARACTERS.filter((c) => {
+    if (!inSeason(c, state)) return false;
+    if (WANDERERS.includes(c.id as (typeof WANDERERS)[number])) return true;
+    return c.home.some((h) => nearby.has(h));
+  });
+}
+
+function maybePresentCharacter(state: GameState, opts?: { smoke?: boolean }): GameState {
+  const smokePull = Boolean(opts?.smoke || (atOwnCamp(state) && (state.camp?.smoke ?? 0) >= 2));
+  const onHours = presentPeople(state);
+  const offHours = presentPeople(state, { ignoreHours: true }).filter((c) => !inHours(c, state.hour));
   const rng = mulberry32(state.rngSeed + 99);
-  if (rng() < 0.45) {
-    const pick = people[Math.floor(rng() * people.length)]!;
-    return { ...state, presentCharacterId: pick.id, rngSeed: nextSeed(state.rngSeed) };
+  let nextSeeded: GameState = { ...state, rngSeed: nextSeed(state.rngSeed) };
+
+  if (onHours.length && rng() < 0.65) {
+    const pick = onHours[Math.floor(rng() * onHours.length)]!;
+    return { ...nextSeeded, presentCharacterId: pick.id };
   }
-  return { ...state, presentCharacterId: null, rngSeed: nextSeed(state.rngSeed) };
+  if (smokePull) {
+    const pool = smokeVisitorPool(state);
+    if (pool.length && rng() < 0.45) {
+      const pick = pool[Math.floor(rng() * pool.length)]!;
+      return { ...nextSeeded, presentCharacterId: pick.id };
+    }
+  }
+  if (offHours.length && rng() < 0.04) {
+    const pick = offHours[Math.floor(rng() * offHours.length)]!;
+    return { ...nextSeeded, presentCharacterId: pick.id };
+  }
+  return { ...nextSeeded, presentCharacterId: null };
+}
+
+function rememberTag(state: GameState, id: CharacterId, tag: string): GameState {
+  const memories = { ...(state.memories ?? {}) };
+  const list = memories[id] ?? [];
+  if (list.includes(tag)) return { ...state, memories };
+  return { ...state, memories: { ...memories, [id]: [...list, tag] } };
+}
+
+function maybeSmokeRipple(state: GameState): GameState {
+  if (!atOwnCamp(state) || !state.camp || state.camp.smoke < 3) return state;
+  return maybeRipple(state, "smoke", 0.35);
+}
+
+function hashString(s: string) {
+  let h = 2166136261;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return h >>> 0;
+}
+
+function jitter(rng: () => number, base: number, amt: number, min: number, max: number) {
+  const d = Math.floor(rng() * (amt * 2 + 1)) - amt;
+  return Math.max(min, Math.min(max, base + d));
+}
+
+const START_PLACES: LocationId[] = [
+  "high-camp",
+  "timberline",
+  "creek",
+  "burned-timber",
+  "lightning-pine",
+  "cabin-approach",
+  "beaver-meadow",
+  "cache-deadfall",
+  "wind-saddle",
+];
+
+function pickWeightedDay(rng: () => number): number {
+  const roll = rng();
+  // Spring ~32%, summer ~23%, fall ~30%, winter ~15%.
+  let seasonStart: number;
+  let span = DAYS_PER_SEASON;
+  if (roll < 0.32) seasonStart = 0;
+  else if (roll < 0.55) seasonStart = DAYS_PER_SEASON;
+  else if (roll < 0.85) seasonStart = DAYS_PER_SEASON * 2;
+  else seasonStart = DAYS_PER_SEASON * 3;
+  return seasonStart + Math.floor(rng() * span);
 }
 
 export function createGame(name: string, kit: Kit): GameState {
+  const trimmed = name.trim() || "Trapper";
+  const seed = (hashString(trimmed) ^ Date.now() ^ Math.imul(kit.length + 1, 99991)) >>> 0;
+  const rng = mulberry32(seed);
+
   const traits = { eye: 1, grit: 1, savvy: 1, hands: 1 };
   const inventory = {
     rations: 4,
@@ -563,12 +718,15 @@ export function createGame(name: string, kit: Kit): GameState {
     extras: [] as string[],
   };
   const meters: Meters = {
-    hunger: 62,
-    thirst: 64,
-    warmth: 52,
-    energy: 58,
-    health: 82,
+    hunger: jitter(rng, 62, 8, 20, 90),
+    thirst: jitter(rng, 64, 8, 20, 90),
+    warmth: jitter(rng, 52, 8, 20, 90),
+    energy: jitter(rng, 58, 8, 20, 90),
+    health: jitter(rng, 82, 8, 70, 90),
   };
+  inventory.rations = Math.max(1, inventory.rations + Math.floor(rng() * 3) - 1);
+  inventory.water = Math.max(1, inventory.water + Math.floor(rng() * 3) - 1);
+  inventory.firewood = Math.max(0, inventory.firewood + Math.floor(rng() * 3) - 1);
   if (kit === "rations") {
     inventory.rations += 4;
     traits.grit += 1;
@@ -577,23 +735,43 @@ export function createGame(name: string, kit: Kit): GameState {
     traits.eye += 1;
   } else {
     inventory.coat = true;
-    meters.warmth = 70;
+    meters.warmth = Math.max(meters.warmth, 70);
     traits.grit += 1;
   }
-  const dayOfYear = 8;
-  const seed = (Date.now() ^ (name.length * 7919)) >>> 0;
+
+  const dayOfYear = pickWeightedDay(rng);
   const season = seasonFromDay(dayOfYear);
-  const state: GameState = {
-    name: name.trim() || "Trapper",
+  const hours = [5, 6, 7, 8, 16, 18] as const;
+  const hour = hours[Math.floor(rng() * hours.length)]!;
+  const weather = pickWeather(season, rng);
+
+  let place = START_PLACES[Math.floor(rng() * START_PLACES.length)]!;
+  let locationId: LocationId = place === "cabin-approach" ? "timberline" : place;
+  const loc = LOCATION_BY_ID[locationId];
+  const connected = [...(loc?.connections.map((c) => c.to) ?? [])];
+  const extraCount = 1 + Math.floor(rng() * 3);
+  const knownLocations: LocationId[] = [locationId];
+  if (place === "cabin-approach" && !knownLocations.includes("abandoned-cabin")) {
+    knownLocations.push("abandoned-cabin");
+  }
+  while (knownLocations.length < extraCount + 1 && connected.length) {
+    const i = Math.floor(rng() * connected.length);
+    const id = connected.splice(i, 1)[0]!;
+    if (!knownLocations.includes(id)) knownLocations.push(id);
+  }
+
+  const opening = pickOpening(rng, locationId, season, hour, seed);
+  let state: GameState = {
+    name: trimmed,
     kit,
     dayOfYear,
-    hour: 7,
+    hour,
     daysSurvived: 0,
     year: 0,
     season,
-    weather: "wind",
-    locationId: "high-camp",
-    knownLocations: ["high-camp", "creek", "timberline"],
+    weather,
+    locationId,
+    knownLocations,
     meters,
     inventory,
     traits,
@@ -606,13 +784,20 @@ export function createGame(name: string, kit: Kit): GameState {
     skirmish: null,
     campfire: false,
     campfireHours: 0,
+    camp: null,
+    memories: {},
+    openingId: opening.id,
     dead: null,
-    rngSeed: seed,
+    rngSeed: nextSeed(seed),
   };
-  return appendLog(
-    state,
-    `${state.name} wakes in a lean-to that leaked all night. Late spring, 1835, too high on the Front Range. The pass is still a white lie. There is no town coming. Eat. Drink. Keep a fire. Do not die.`,
-  );
+  if (opening.apply) state = opening.apply(state, mulberry32(state.rngSeed));
+  state.rngSeed = nextSeed(state.rngSeed);
+  if (state.presentCharacterId) {
+    // Opening may seat someone; leave them.
+  } else {
+    state = maybePresentCharacter(state);
+  }
+  return appendLog(state, opening.text(state));
 }
 
 function resolveEncounterChoice(state: GameState, optionId: string): GameState {
@@ -638,6 +823,17 @@ function resolveChoice(state: GameState, option: EncounterChoice, closeEncounter
   return next;
 }
 
+function fallbackLine(person: (typeof CHARACTERS)[number], tags: string[]): string {
+  const bits: string[] = [];
+  if (tags.includes("shared-meat")) bits.push("The meat you shared still sits between you like a third person.");
+  if (tags.includes("stole")) bits.push("They look at your hands as if the taking were still on them.");
+  if (tags.includes("left-in-storm")) bits.push("The storm you walked out of is still in their face.");
+  if (tags.includes("sat-at-fire")) bits.push("They nod at the idea of your fire, even if it is not this one.");
+  if (tags.includes("struck-camp")) bits.push("They mention the empty ring of stones you left. Not kindly.");
+  if (bits.length === 0) return person.fallback;
+  return `${person.fallback} ${bits[0]}`;
+}
+
 function talk(state: GameState): GameState {
   const id = state.presentCharacterId;
   if (!id) {
@@ -645,16 +841,19 @@ function talk(state: GameState): GameState {
   }
   const person = CHARACTER_BY_ID[id];
   if (!person) return state;
+  const mem = state.memories?.[id] ?? [];
   const node = person.nodes.find((n) => {
     if (state.seenDialogueIds.includes(n.id)) return false;
     if (n.seasons && !n.seasons.includes(state.season)) return false;
     if (n.minStanding != null && (state.standing[id] ?? 0) < n.minStanding) return false;
     if (n.requiresExtra && !state.inventory.extras.includes(n.requiresExtra)) return false;
     if (n.unlessExtra && state.inventory.extras.includes(n.unlessExtra)) return false;
+    if (n.requiresMemory && !mem.includes(n.requiresMemory)) return false;
+    if (n.unlessMemory && mem.includes(n.unlessMemory)) return false;
     return true;
   });
   if (!node) {
-    return appendLog(advanceTime(state, 1), person.fallback);
+    return appendLog(advanceTime(state, 1), fallbackLine(person, mem));
   }
   const fake: EncounterDef = {
     id: `dlg-${node.id}`,
@@ -696,8 +895,22 @@ function travel(state: GameState, to: LocationId): GameState {
   }
   next.locationId = to;
   if (!next.knownLocations.includes(to)) next.knownLocations = [...next.knownLocations, to];
-  next = maybePresentCharacter(next);
-  next = appendLog(next, arrivalParagraph(next, to, edge.trailName));
+  const arrivingCamp = Boolean(next.camp && next.camp.locationId === to);
+  next = maybePresentCharacter(next, { smoke: arrivingCamp && (next.camp?.smoke ?? 0) >= 2 });
+  let arrival = arrivalParagraph(next, to, edge.trailName);
+  if (arrivingCamp) {
+    const jobs = readyJobLine(next.camp);
+    if (jobs) arrival = `${arrival} ${jobs}`;
+    if (next.camp?.cache.extras.includes("raven-theft")) {
+      arrival = `${arrival} Ravens have been at the rack.`;
+      next.camp = cloneCamp(next.camp);
+      next.camp.cache.extras = next.camp.cache.extras.filter((e) => e !== "raven-theft");
+    }
+    if (next.camp?.cache.extras.includes("rock-theft")) {
+      arrival = `${arrival} The rock you left meat under is a rock again.`;
+    }
+  }
+  next = appendLog(next, arrival);
   const fallRng = mulberry32(next.rngSeed);
   next = { ...next, rngSeed: nextSeed(next.rngSeed) };
   if (next.weather === "blizzard" && fallRng() < 0.15) {
@@ -707,10 +920,18 @@ function travel(state: GameState, to: LocationId): GameState {
       hours: 1,
     });
   }
+  if (arrivingCamp && (next.camp?.smoke ?? 0) >= 2 && mulberry32(next.rngSeed)() < 0.4) {
+    next = { ...next, rngSeed: nextSeed(next.rngSeed) };
+    const smokeEnc = pickEncounter(next, "smoke");
+    if (isUniqueStory(smokeEnc) && mulberry32(next.rngSeed)() < 0.7) {
+      return beginEncounter(next, smokeEnc);
+    }
+  }
   const enc = pickEncounter(next, "arrive");
   if (isUniqueStory(enc) && mulberry32(next.rngSeed)() < 0.8) {
     return beginEncounter(next, enc);
   }
+  if (arrivingCamp) return maybeSmokeRipple(next);
   return next;
 }
 
@@ -724,12 +945,12 @@ function sleep(state: GameState): GameState {
   }
   next.meters = { ...next.meters };
   next.inventory = { ...next.inventory, extras: [...next.inventory.extras] };
-  next.meters.energy = clamp(next.meters.energy + (fire || shelter ? 55 : 25));
-  if (fire || shelter) next.meters.warmth = clamp(next.meters.warmth + 20);
-  else next.meters.warmth = clamp(next.meters.warmth - 10);
+  next.meters.energy = clamp(next.meters.energy + (fire || shelter ? 35 : 18));
+  if (fire || shelter) next.meters.warmth = clamp(next.meters.warmth + 12);
+  else next.meters.warmth = clamp(next.meters.warmth - 6);
   if (state.weather === "blizzard" && !shelter && !fire) {
-    next.meters.warmth = clamp(next.meters.warmth - 25);
-    next.meters.health = clamp(next.meters.health - 8);
+    next.meters.warmth = clamp(next.meters.warmth - 12);
+    next.meters.health = clamp(next.meters.health - 4);
   }
   const stillBurning = fire && shelter && fireHoursLeft(next) > 0;
   next.campfire = stillBurning;
@@ -759,6 +980,7 @@ function sleep(state: GameState): GameState {
   } else {
     next = maybeRipple(next, "sleep", 0.24);
   }
+  next = maybeSmokeRipple(next);
   return finalizeHealth(next, true);
 }
 
@@ -917,6 +1139,397 @@ function resolveSkirmish(state: GameState, move: SkirmishMove): GameState {
   return next;
 }
 
+function pitchCopy(state: GameState, usedWood: boolean): string {
+  const loc = LOCATION_BY_ID[state.locationId];
+  const name = loc?.name ?? "this ground";
+  if (usedWood) {
+    return `You pick the ground at ${name} the way a man picks a grave: for drainage, for wind, for the lie that this will be temporary. Stones for a ring. One stick of wood to start a claim. The mountain does not object.`;
+  }
+  return `You pick the ground at ${name}. Stones stacked in a ring, no wood spent. A claimed bench, not yet a camp. Canvas still in the pack. The Front Range files the claim without reading it.`;
+}
+
+function strikeCopy(state: GameState, leftBehind: boolean, jobNote: string): string {
+  const loc = LOCATION_BY_ID[state.locationId];
+  const name = loc?.name ?? "this ground";
+  const left = leftBehind
+    ? " The pack will not take it all. What stays is a gift to ravens and whoever walks this bench next."
+    : " The pack takes what the pack can.";
+  return `You pull the stakes at ${name}. Poles come up dirty. The ring of stone stays, which is how a camp dies without a speech. ${jobNote}.${left} You were a resident. Now you are weather.`;
+}
+
+function pitchCamp(state: GameState): GameState {
+  if (state.camp) {
+    return appendLog(state, "You already have a camp. Pull those stakes before you claim another bench.");
+  }
+  if (!canPitch(state)) {
+    if (CLAIMED_HERE(state.locationId)) {
+      return appendLog(state, "This ground is spoken for. Pitching here would be a kind of theft the owners would notice.");
+    }
+    return appendLog(state, "This is not a bench you can claim. Wind, rock, or someone else’s fire.");
+  }
+  let next: GameState = {
+    ...state,
+    inventory: { ...state.inventory, extras: [...state.inventory.extras] },
+  };
+  const usedWood = next.inventory.firewood > 0;
+  if (usedWood) next.inventory.firewood -= 1;
+  next.camp = emptyCamp(state.locationId, { fireRing: usedWood, smoke: usedWood ? 1 : 0 });
+  next = appendLog(advanceTime(next, 2), pitchCopy(state, usedWood));
+  return maybeRipple(next, "camp", 0.45);
+}
+
+function CLAIMED_HERE(id: LocationId) {
+  return (
+    id === "ute-camp" ||
+    id === "arapaho-ground" ||
+    id === "mexican-trail-camp" ||
+    id === "abandoned-cabin" ||
+    id === "homesteader-ruin"
+  );
+}
+
+function strikeCamp(state: GameState): GameState {
+  if (!atOwnCamp(state) || !state.camp) {
+    if (state.camp) return appendLog(state, "Your camp is not this ground. Walk there if you mean to pull stakes.");
+    return appendLog(state, "There is no camp to strike. Stones, if any, belong to the last man.");
+  }
+  const camp = cloneCamp(state.camp);
+  let inv: Inventory = { ...state.inventory, extras: [...state.inventory.extras] };
+  const recovered = recoverOnStrike(camp, inv);
+  inv = recovered.inv;
+  const packed = packLeftover(inv, camp.cache);
+  let next: GameState = {
+    ...state,
+    inventory: packed.inv,
+    camp: null,
+    memories: { ...(state.memories ?? {}) },
+  };
+  if (next.presentCharacterId) {
+    next = rememberTag(next, next.presentCharacterId, "struck-camp");
+  }
+  next = appendLog(advanceTime(next, 2), strikeCopy(state, packed.leftBehind, recovered.note));
+  return maybeRipple(next, "camp", 0.3);
+}
+
+function buildPiece(state: GameState, piece: CampPiece): GameState {
+  if (!atOwnCamp(state) || !state.camp) return appendLog(state, "Build where you have claimed a bench.");
+  if (state.camp[piece]) return appendLog(state, "That work is already standing.");
+  let next: GameState = { ...state, camp: cloneCamp(state.camp), inventory: { ...state.inventory, extras: [...state.inventory.extras] } };
+  const hours = buildHours(piece);
+
+  if (piece === "leanTo") {
+    const spent = spendFromPackOrCache(next, "firewood", 2);
+    if (!spent) return appendLog(state, "A lean-to wants two sticks of wood you do not have.");
+    next = spent;
+    next.camp = cloneCamp(next.camp!);
+    next.camp.leanTo = true;
+    next = appendLog(
+      advanceTime(next, hours),
+      "Poles, boughs, a roof that is mostly an argument. You crawl under it anyway. This is what passes for a house.",
+    );
+    return next;
+  }
+  if (piece === "fireRing") {
+    const spent = spendFromPackOrCache(next, "firewood", 1) ?? next;
+    next = spent;
+    next.camp = cloneCamp(next.camp!);
+    next.camp.fireRing = true;
+    next = appendLog(
+      advanceTime(next, hours),
+      "You stack a ring of stone. Wind will still find you. The ring is for your own argument, and for fire when you have it.",
+    );
+    return next;
+  }
+  if (piece === "woodpile") {
+    const spent = spendFromPackOrCache(next, "firewood", 1);
+    if (!spent) return appendLog(state, "A woodpile wants a first stick.");
+    next = spent;
+    next.camp = cloneCamp(next.camp!);
+    next.camp.woodpile = true;
+    next = appendLog(
+      advanceTime(next, hours),
+      `You stack a pile that will hold more than the pack (${firewoodCap(next.camp)} if you fetch it). The wind starts editing immediately.`,
+    );
+    return next;
+  }
+  if (piece === "cachePit") {
+    if (state.season === "winter") {
+      const rolled = rollCheck(next, "hands", 11);
+      next = appendLog(
+        rolled.state,
+        `Pit — d20 ${rolled.roll.d20} + hands ${rolled.roll.modifier} − ${rolled.roll.penalty} = ${rolled.roll.total} vs 11.`,
+        rolled.roll,
+      );
+      if (!rolled.roll.success) {
+        next.meters = { ...next.meters, energy: clamp(next.meters.energy - 6) };
+        next.camp = cloneCamp(next.camp!);
+        next.camp.cachePit = true;
+        next = appendLog(
+          advanceTime(next, hours + 1),
+          "Frozen ground. You get the pit anyway, paid in skin and an extra hour of hate.",
+        );
+        return next;
+      }
+    }
+    next.camp = cloneCamp(next.camp!);
+    next.camp.cachePit = true;
+    next = appendLog(
+      advanceTime(next, hours),
+      "You dig a pit and lid it with stone. Meat can live here. The rock-on-a-ration days are a story you tell other men.",
+    );
+    return next;
+  }
+  if (piece === "dryingRack") {
+    const spent = spendFromPackOrCache(next, "firewood", 1);
+    if (!spent) return appendLog(state, "A rack wants a pole.");
+    next = spent;
+    next.camp = cloneCamp(next.camp!);
+    next.camp.dryingRack = true;
+    next = appendLog(
+      advanceTime(next, hours),
+      "Poles and a crosspiece. Meat can hang here until it forgets it was wet. Ravens will file an opinion.",
+    );
+    return next;
+  }
+  // pot
+  const hasTin = next.inventory.extras.includes("tin-pot") || next.camp!.cache.extras.includes("tin-pot");
+  if (hasTin) {
+    next.inventory.extras = next.inventory.extras.filter((e) => e !== "tin-pot");
+    if (next.camp!.cache.extras.includes("tin-pot")) {
+      next.camp = cloneCamp(next.camp!);
+      next.camp.cache.extras = next.camp.cache.extras.filter((e) => e !== "tin-pot");
+    }
+  } else {
+    const spent = spendFromPackOrCache(next, "pelts", 2);
+    if (!spent) {
+      return appendLog(state, "A pot wants a tin, or two pelts traded into one. You have neither.");
+    }
+    next = spent;
+  }
+  next.camp = cloneCamp(next.camp!);
+  next.camp.pot = true;
+  next = appendLog(
+    advanceTime(next, hours),
+    hasTin
+      ? "You rig the tin over the ring. Steam becomes a plan."
+      : "Two pelts go to a pot that is more idea than metal. It will boil. It will not impress Eliza.",
+  );
+  return next;
+}
+
+function stowItem(state: GameState, item: CampStowItem, amount: number): GameState {
+  if (!atOwnCamp(state) || !state.camp) return appendLog(state, "Stow where you have a camp.");
+  const cap = cacheCap(state.camp, item);
+  if (cap <= 0) {
+    return appendLog(
+      state,
+      item === "rations"
+        ? "Without a pit you can only leave meat on a rock, and the rock is already a rumor."
+        : "Without a pit this cache will not hold that. Dig, or keep it on your back.",
+    );
+  }
+  const have = state.inventory[item];
+  if (have <= 0) return appendLog(state, "The pack has none of that to leave.");
+  const room = cap - state.camp.cache[item];
+  if (room <= 0) return appendLog(state, "The cache is full of that. The pack keeps the rest.");
+  const move = Math.min(amount, have, room);
+  const next: GameState = {
+    ...state,
+    inventory: { ...state.inventory, [item]: have - move },
+    camp: cloneCamp(state.camp),
+  };
+  next.camp!.cache[item] += move;
+  const label =
+    item === "rations" && !state.camp.cachePit
+      ? "You leave meat under a rock and tell yourself it is a cache. The country may collect a tithe."
+      : item === "rations"
+        ? "You stow meat in the pit. Rocks on the lid. A mark only you will admit to."
+        : item === "water"
+          ? "You leave water at camp. The tin sits in shade like a small argument won."
+          : item === "firewood"
+            ? "Wood on the pile. The wind starts editing immediately."
+            : "You put it in the pit and try not to think of the walk back.";
+  return appendLog(advanceTime(next, 1), label);
+}
+
+function takeFromCache(state: GameState, item: CampStowItem, amount: number): GameState {
+  if (!atOwnCamp(state) || !state.camp) return appendLog(state, "There is no cache here that is yours.");
+  const have = state.camp.cache[item];
+  if (have <= 0) return appendLog(state, "The cache is empty of that.");
+  const room = packRoom(state.inventory, item);
+  if (room <= 0) {
+    return appendLog(
+      state,
+      `The pack is already at its honest limit (${PACK_LIMITS[item]} ${item}). Leftover stays in the pit.`,
+    );
+  }
+  const move = Math.min(amount, have, room);
+  const next: GameState = {
+    ...state,
+    inventory: { ...state.inventory, [item]: state.inventory[item] + move },
+    camp: cloneCamp(state.camp),
+  };
+  next.camp!.cache[item] -= move;
+  const leftover = next.camp!.cache[item];
+  const label =
+    item === "water"
+      ? leftover
+        ? "You take water from camp. The rest stays in the shade."
+        : "You take water from camp."
+      : leftover
+        ? `You take what the pack will carry. ${leftover} ${item} stay.`
+        : `You take ${item} from camp.`;
+  return appendLog(advanceTime(next, 1), label);
+}
+
+function cookAtCamp(state: GameState): GameState {
+  const can = canCook(state);
+  if (!can.ok) return appendLog(state, can.reason ?? "You cannot cook here.");
+  let next = spendFromPackOrCache(state, "rations", 1);
+  if (!next) return appendLog(state, "No meat to cook.");
+  next = spendFromPackOrCache(next, "water", 1);
+  if (!next) return appendLog(state, "No water for the pot.");
+  if (!next.campfire) {
+    const withWood = spendFromPackOrCache(next, "firewood", 1);
+    if (!withWood) return appendLog(state, "Need a fire, or a ring and wood.");
+    next = withWood;
+    next.campfire = true;
+    next.campfireHours = 4;
+  }
+  next.camp = cloneCamp(next.camp!);
+  const smokeAdd = 2 + (mulberry32(next.rngSeed)() < 0.5 ? 1 : 0);
+  next.rngSeed = nextSeed(next.rngSeed);
+  next.camp.smoke = Math.min(5, next.camp.smoke + smokeAdd);
+  const hunger = can.good ? 18 : 12;
+  const warmth = can.good ? 8 : 3;
+  next.meters = {
+    ...next.meters,
+    hunger: clamp(next.meters.hunger + hunger),
+    warmth: clamp(next.meters.warmth + warmth),
+  };
+  const text = can.good
+    ? "The pot goes on. Fat, water, the idea of salt. Hunger steps back. Smoke writes your name on the sky."
+    : "Bark and a tin stand-in. It boils if you believe in it. The meat is cooked in the way a rumor is true. Smoke still goes up.";
+  next = appendLog(advanceTime(next, 1), text);
+  if ((next.camp?.smoke ?? 0) >= 3 && !next.presentCharacterId) {
+    next = maybePresentCharacter(next, { smoke: true });
+    const guest = next.presentCharacterId;
+    if (guest) {
+      next = rememberTag(next, guest, "sat-at-fire");
+      next = rememberTag(next, guest, "shared-meat");
+    }
+  }
+  next = maybeRipple(next, "smoke", 0.45);
+  return maybeRipple(next, "eat", 0.2);
+}
+
+function startCampJob(state: GameState, kind: CampJob["kind"]): GameState {
+  const can = canStartJob(state, kind);
+  if (!can.ok) return appendLog(state, can.reason ?? "You cannot start that here.");
+  let next: GameState = { ...state, camp: cloneCamp(state.camp!), inventory: { ...state.inventory, extras: [...state.inventory.extras] } };
+  let payload = 0;
+  if (kind === "dry-meat") {
+    const spent = spendFromPackOrCache(next, "rations", 2);
+    if (!spent) return appendLog(state, "Need two rations to hang.");
+    next = spent;
+    next.camp = cloneCamp(next.camp!);
+    payload = 2;
+  }
+  if (kind === "smoke-hide") {
+    const spent = spendFromPackOrCache(next, "pelts", 1);
+    if (!spent) return appendLog(state, "Need a pelt.");
+    next = spent;
+    next.camp = cloneCamp(next.camp!);
+    payload = 1;
+    if (!next.campfire && next.camp.fireRing) {
+      const wood = spendFromPackOrCache(next, "firewood", 1);
+      if (wood) {
+        next = wood;
+        next.camp = cloneCamp(next.camp!);
+        next.campfire = true;
+        next.campfireHours = 6;
+      }
+    }
+  }
+  if (kind === "bank-coals" && !next.campfire) {
+    return appendLog(state, "Bank coals while there is a fire to bank.");
+  }
+  const job: CampJob = {
+    id: `${kind}-${state.dayOfYear}-${state.hour}-${state.rngSeed.toString(36)}`,
+    kind,
+    hoursLeft: jobHours(kind),
+    startedOnDay: state.dayOfYear,
+    payload,
+  };
+  next.camp!.jobs = [...next.camp!.jobs, job];
+  const line = {
+    "dry-meat": "You hang two rations on the rack. Sixteen hours, if the ravens file no appeal.",
+    "bank-coals": "You bury the red eye under ash. Morning will be less of a thief.",
+    "set-snares": "Wire off camp, baited with hope, which is poor bait. Twelve hours.",
+    "smoke-hide": "A pelt on poles. Smoke takes it the way a lung takes air. The smell is a letter.",
+  }[kind];
+  next = appendLog(advanceTime(next, 1), line);
+  if (kind === "smoke-hide") next = maybeRipple(next, "smoke", 0.4);
+  return next;
+}
+
+function collectCampJob(state: GameState, id: string): GameState {
+  if (!atOwnCamp(state) || !state.camp) return appendLog(state, "Collect it at the camp that did the work.");
+  const job = state.camp.jobs.find((j) => j.id === id);
+  if (!job) return appendLog(state, "That work is not here.");
+  if (job.hoursLeft > 0) {
+    return appendLog(state, `Not yet. ${job.hoursLeft} hours still on ${jobLabel(job.kind)}.`);
+  }
+  let next: GameState = {
+    ...state,
+    camp: cloneCamp(state.camp),
+    inventory: { ...state.inventory, extras: [...state.inventory.extras] },
+  };
+  next.camp!.jobs = next.camp!.jobs.filter((j) => j.id !== id);
+  let text = "";
+  if (job.kind === "dry-meat") {
+    const room = packRoom(next.inventory, "rations");
+    const toPack = Math.min(2, room);
+    const toCache = 2 - toPack;
+    next.inventory.rations += toPack;
+    if (toCache > 0) {
+      const cap = cacheCap(next.camp!, "rations");
+      const fit = Math.min(toCache, Math.max(0, cap - next.camp!.cache.rations));
+      next.camp!.cache.rations += fit;
+    }
+    if (!next.camp!.cache.extras.includes("jerky")) next.camp!.cache.extras.push("jerky");
+    if (!next.inventory.extras.includes("jerky")) next.inventory.extras.push("jerky");
+    text = "You take the jerky off the rack. Stiff as a legal document. It will keep longer than wet meat.";
+  } else if (job.kind === "bank-coals") {
+    next.camp = addCampExtra(next.camp!, "banked-coals");
+    if (!next.inventory.extras.includes("banked-coals")) next.inventory.extras.push("banked-coals");
+    text = "You take the banked coals like coin. The next fire will be less of a beggar.";
+  } else if (job.kind === "set-snares") {
+    const rng = mulberry32(next.rngSeed);
+    next.rngSeed = nextSeed(next.rngSeed);
+    const meat = rng() < 0.55 ? 1 : 0;
+    if (meat) {
+      const room = packRoom(next.inventory, "rations");
+      if (room > 0) next.inventory.rations += 1;
+      else next.camp!.cache.rations += 1;
+      text = "The snare has done the ugly arithmetic. A hare, stiff, honest. You reset nothing; the job is collected.";
+    } else {
+      text = "Empty loops. A feather. The suggestion of a joke. You walk back to the ring.";
+    }
+  } else {
+    if (!next.inventory.extras.includes("smoked-hide")) next.inventory.extras.push("smoked-hide");
+    next.camp = addCampExtra(next.camp!, "smoked-hide");
+    text = "The hide has taken the smoke. You roll it. Warmth is a smaller country and you have bought a corner.";
+    if (next.presentCharacterId) {
+      next.standing = { ...next.standing };
+      next.standing[next.presentCharacterId] = (next.standing[next.presentCharacterId] ?? 0) + 1;
+      text += " You could have gifted it. You keep it. They notice anyway.";
+    }
+  }
+  next = appendLog(advanceTime(next, 1), text);
+  return maybeRipple(next, "camp", 0.25);
+}
+
 export function applyAction(state: GameState, action: GameAction): GameState {
   if (state.dead) return state;
   if (state.skirmish && action.type !== "skirmish") return state;
@@ -931,9 +1544,9 @@ export function applyAction(state: GameState, action: GameAction): GameState {
       let next: GameState = {
         ...state,
         inventory: { ...state.inventory, rations: state.inventory.rations - 1 },
-        meters: { ...state.meters, hunger: clamp(state.meters.hunger + 40) },
+        meters: { ...state.meters, hunger: clamp(state.meters.hunger + 22) },
       };
-      next = appendLog(advanceTime(next, 1), eatCopy(state));
+      next = appendLog(next, eatCopy(state));
       if (timeBand(state.hour) === "dusk" && state.campfire) {
         const rng = mulberry32(next.rngSeed);
         next = { ...next, rngSeed: nextSeed(next.rngSeed) };
@@ -954,16 +1567,19 @@ export function applyAction(state: GameState, action: GameAction): GameState {
       const next = {
         ...state,
         inventory: { ...state.inventory, water: state.inventory.water - 1 },
-        meters: { ...state.meters, thirst: clamp(state.meters.thirst + 48) },
+        meters: { ...state.meters, thirst: clamp(state.meters.thirst + 26) },
       };
-      return maybeRipple(appendLog(advanceTime(next, 1), drinkCopy(state)), "drink", 0.22);
+      return maybeRipple(appendLog(next, drinkCopy(state)), "drink", 0.22);
     }
     case "sleep":
       return sleep(state);
     case "makeFire": {
       if (state.inventory.firewood <= 0) return appendLog(state, "No wood. Rubbing your hands is not a fire.");
       const fatwood = state.inventory.extras.includes("fatwood");
-      if (state.weather === "blizzard" && !fatwood) {
+      const bankedReady =
+        (atOwnCamp(state) && state.camp?.cache.extras.includes("banked-coals")) ||
+        state.inventory.extras.includes("banked-coals");
+      if (state.weather === "blizzard" && !fatwood && !bankedReady) {
         return appendLog(state, "The blizzard eats the first spark and wants the rest.");
       }
       let next: GameState = {
@@ -973,9 +1589,25 @@ export function applyAction(state: GameState, action: GameAction): GameState {
         campfireHours:
           (state.weather === "blizzard" ? 4 : 10) + (state.inventory.extras.includes("fire-drill") ? 2 : 0),
         meters: { ...state.meters, warmth: clamp(state.meters.warmth + (fatwood ? 38 : 28)) },
+        camp: state.camp ? cloneCamp(state.camp) : state.camp,
       };
+      const banked =
+        atOwnCamp(next) &&
+        (next.camp?.cache.extras.includes("banked-coals") || next.inventory.extras.includes("banked-coals"));
+      if (banked) {
+        next.meters.warmth = clamp(next.meters.warmth + 12);
+        if (next.camp?.cache.extras.includes("banked-coals")) {
+          next.camp = cloneCamp(next.camp);
+          next.camp.cache.extras = next.camp.cache.extras.filter((e) => e !== "banked-coals");
+        }
+        next.inventory.extras = next.inventory.extras.filter((e) => e !== "banked-coals");
+      }
       if (state.weather === "blizzard" && fatwood) {
         next.inventory.extras = next.inventory.extras.filter((e) => e !== "fatwood");
+      }
+      if (atOwnCamp(next) && next.camp) {
+        next.camp = cloneCamp(next.camp);
+        next.camp.smoke = Math.min(5, next.camp.smoke + 1);
       }
       next = appendLog(advanceTime(next, 1), fireCopy(state));
       if (timeBand(state.hour) === "dusk" || timeBand(state.hour) === "night" || state.weather === "blizzard") {
@@ -986,7 +1618,8 @@ export function applyAction(state: GameState, action: GameAction): GameState {
           if (people.length) next.presentCharacterId = people[Math.floor(rng() * people.length)]!.id;
         }
       }
-      return maybeRipple(next, "fire", 0.34);
+      next = maybeRipple(next, "fire", 0.34);
+      return maybeSmokeRipple(next);
     }
     case "tendFire": {
       if (!state.campfire) return appendLog(state, "There is no fire to tend. Ash. Opinion.");
@@ -1003,7 +1636,8 @@ export function applyAction(state: GameState, action: GameAction): GameState {
       if (spend) next.inventory.firewood = Math.max(0, next.inventory.firewood - 1);
       next.meters.warmth = clamp(next.meters.warmth + (spend ? 14 : 8));
       next = appendLog(advanceTime(next, 1), tendCopy(state));
-      return maybeRipple(next, "fire", 0.3);
+      next = maybeRipple(next, "fire", 0.3);
+      return maybeSmokeRipple(next);
     }
     case "gatherWater": {
       const loc = LOCATION_BY_ID[state.locationId];
@@ -1019,7 +1653,7 @@ export function applyAction(state: GameState, action: GameAction): GameState {
           rolled.roll,
         );
         if (!rolled.roll.success) {
-          next.meters = { ...next.meters, health: clamp(next.meters.health - 6), warmth: clamp(next.meters.warmth - 12) };
+          next.meters = { ...next.meters, health: clamp(next.meters.health - 4), warmth: clamp(next.meters.warmth - 7) };
           next.inventory = {
             ...next.inventory,
             extras: next.inventory.extras.filter((e) => e !== "dry-boots"),
@@ -1075,7 +1709,8 @@ export function applyAction(state: GameState, action: GameAction): GameState {
       if (state.weather === "storm" && rng() < 0.18) next.weather = "wind";
       const enc = pickEncounter(next, "wait");
       if (isUniqueStory(enc)) return beginEncounter(next, enc);
-      return appendLog(next, waitFlavor(next));
+      next = appendLog(next, waitFlavor(next));
+      return maybeSmokeRipple(next);
     }
     case "restWatch": {
       const hours = 1 + (mulberry32(state.rngSeed)() < 0.4 ? 1 : 0);
@@ -1089,7 +1724,7 @@ export function applyAction(state: GameState, action: GameAction): GameState {
       let next = advanceTime(state, hours);
       if (next.dead) return appendLog(next, "You search until the ground is the last thing that holds you.");
       if (state.weather === "blizzard") {
-        next.meters = { ...next.meters, warmth: clamp(next.meters.warmth - 8), energy: clamp(next.meters.energy - 6) };
+        next.meters = { ...next.meters, warmth: clamp(next.meters.warmth - 4), energy: clamp(next.meters.energy - 3) };
       }
       const enc = pickEncounter(next, "search");
       if (isUniqueStory(enc)) return beginEncounter(next, enc);
@@ -1115,7 +1750,7 @@ export function applyAction(state: GameState, action: GameAction): GameState {
         text:
           huntCopy(state, rolled.roll.success, usedRifle) +
           (wound ? " A branch, a fall, a red line on the shin." : ""),
-        hours: 3,
+        hours: 2,
         meters: rolled.roll.success
           ? { energy: -12 }
           : { energy: -12, health: wound ? -8 : 0 },
@@ -1142,7 +1777,7 @@ export function applyAction(state: GameState, action: GameAction): GameState {
         hours: 2,
         inventory: rolled.roll.success && !dunk ? { rations: 1 } : undefined,
         meters: dunk
-          ? { health: -6, warmth: -14, energy: -8 }
+          ? { health: -8, warmth: -14, energy: -8 }
           : { energy: -8, warmth: ice ? -10 : -2 },
       });
       return maybeRipple(next, "fish", 0.3);
@@ -1184,7 +1819,7 @@ export function applyAction(state: GameState, action: GameAction): GameState {
       let next: GameState = {
         ...state,
         rngSeed: nextSeed(state.rngSeed),
-        meters: { ...state.meters, energy: clamp(state.meters.energy - 8) },
+        meters: { ...state.meters, energy: clamp(state.meters.energy - 4) },
         inventory: { ...state.inventory, extras: [...state.inventory.extras] },
       };
       const dry = rng() < 0.5 && (state.campfire || hasShelter(state));
@@ -1198,7 +1833,7 @@ export function applyAction(state: GameState, action: GameAction): GameState {
       const r = rng();
       const kind: "meat" | "empty" | "cut" = r < 0.38 ? "meat" : r < 0.52 ? "cut" : "empty";
       next.inventory = { ...next.inventory };
-      next.meters = { ...next.meters, energy: clamp(next.meters.energy - 6) };
+      next.meters = { ...next.meters, energy: clamp(next.meters.energy - 3) };
       if (kind === "meat") next.inventory.rations = next.inventory.rations + 1;
       next = appendLog(advanceTime(next, 2), snaresCopy(state, kind));
       return maybeRipple(next, "snares", kind === "cut" ? 0.7 : 0.28);
@@ -1230,7 +1865,7 @@ export function applyAction(state: GameState, action: GameAction): GameState {
         inventory: { ...state.inventory, extras: [...state.inventory.extras] },
         meters: {
           ...state.meters,
-          energy: clamp(state.meters.energy - 12),
+          energy: clamp(state.meters.energy - 6),
           warmth: clamp(state.meters.warmth + 14),
         },
       };
@@ -1253,6 +1888,22 @@ export function applyAction(state: GameState, action: GameAction): GameState {
       return resolveEncounterChoice(state, action.optionId);
     case "skirmish":
       return resolveSkirmish(state, action.move);
+    case "pitchCamp":
+      return pitchCamp(state);
+    case "strikeCamp":
+      return strikeCamp(state);
+    case "build":
+      return buildPiece(state, action.piece);
+    case "stow":
+      return stowItem(state, action.item, action.amount ?? 1);
+    case "takeFromCache":
+      return takeFromCache(state, action.item, action.amount ?? 1);
+    case "cook":
+      return cookAtCamp(state);
+    case "startJob":
+      return startCampJob(state, action.kind);
+    case "collectJob":
+      return collectCampJob(state, action.id);
   }
 }
 

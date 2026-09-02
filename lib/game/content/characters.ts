@@ -7,6 +7,7 @@ export const CHARACTERS: CharacterDef[] = [
     art: "/art/people/eliza-ward.jpg",
     home: ["abandoned-cabin"],
     seasons: "all",
+    hours: ["morning", "afternoon"],
     blurb: "Holds the cabin like a claim. Will share a stove for work or pelts.",
     fallback:
       "Eliza looks you over the way she looks at weather. “You know where the woodpile is. Don’t track mud on my floor.”",
@@ -26,6 +27,7 @@ export const CHARACTERS: CharacterDef[] = [
               standing: { id: "eliza-ward", delta: 1 },
               presentCharacter: "eliza-ward",
               markDialogue: "eliza-first",
+              remember: { id: "eliza-ward", tag: "sat-at-fire" },
             },
           },
           {
@@ -39,6 +41,7 @@ export const CHARACTERS: CharacterDef[] = [
               standing: { id: "eliza-ward", delta: 1 },
               presentCharacter: "eliza-ward",
               markDialogue: "eliza-first",
+              remember: { id: "eliza-ward", tag: "sat-at-fire" },
             },
           },
           {
@@ -98,6 +101,7 @@ export const CHARACTERS: CharacterDef[] = [
     art: "/art/people/two-crows.jpg",
     home: ["ute-camp", "elk-wallow", "beaver-meadow"],
     seasons: ["spring", "summer", "fall"],
+    hours: ["dawn"],
     blurb: "Ute hunter. Trades meat and water for powder or honesty.",
     fallback:
       "Two Crows nods as if he expected you. He does not waste English on weather you can see.",
@@ -116,6 +120,7 @@ export const CHARACTERS: CharacterDef[] = [
               standing: { id: "two-crows", delta: 1 },
               presentCharacter: "two-crows",
               markDialogue: "two-crows-trade",
+              remember: { id: "two-crows", tag: "shared-meat" },
             },
           },
           {
@@ -173,6 +178,7 @@ export const CHARACTERS: CharacterDef[] = [
     art: "/art/people/silas-crowe.jpg",
     home: ["high-camp", "lightning-pine", "timberline", "mexican-trail-camp"],
     seasons: "all",
+    hours: ["dawn", "dusk"],
     blurb: "Old mountain man. Good advice. Bad company. Drunk more often than not.",
     fallback:
       "Silas lifts a tin cup that is not tea. “You still alive? Wasteful.”",
@@ -193,6 +199,7 @@ export const CHARACTERS: CharacterDef[] = [
               unlockLocation: "homesteader-ruin",
               presentCharacter: "silas-crowe",
               markDialogue: "silas-advice",
+              remember: { id: "silas-crowe", tag: "shared-meat" },
             },
           },
           {
@@ -255,6 +262,7 @@ export const CHARACTERS: CharacterDef[] = [
     art: "/art/people/padre-tomas.jpg",
     home: ["mexican-trail-camp", "south-park-rim", "hot-spring"],
     seasons: ["spring", "summer", "fall"],
+    hours: ["morning", "afternoon"],
     blurb: "Itinerant from the Taos trail. Food, confession, and a letter he wants carried.",
     fallback:
       "The padre blesses the air between you as if it needed it. “Still walking. That is a kind of prayer.”",
@@ -274,6 +282,7 @@ export const CHARACTERS: CharacterDef[] = [
               standing: { id: "padre-tomas", delta: 2 },
               presentCharacter: "padre-tomas",
               markDialogue: "tomas-letter",
+              remember: { id: "padre-tomas", tag: "shared-meat" },
             },
           },
           {
@@ -328,6 +337,7 @@ export const CHARACTERS: CharacterDef[] = [
     art: "/art/people/hennepin.jpg",
     home: ["south-pass", "mexican-trail-camp", "abandoned-cabin"],
     seasons: "all",
+    hours: ["afternoon"],
     blurb: "American Fur remnant. Wants your traps. Offers a safe contract that is not safe.",
     fallback:
       "Hennepin smiles with too many teeth. “The Company still has a use for a man who isn’t particular.”",
@@ -415,6 +425,7 @@ export const CHARACTERS: CharacterDef[] = [
     art: "/art/people/ned-calhoun.jpg",
     home: ["timberline", "creek", "high-camp", "lightning-pine"],
     seasons: "all",
+    hours: ["afternoon"],
     blurb: "The boy from St. Louis. Lost. Eats your rations. May save you later.",
     fallback:
       "Ned looks at your pack the way a dog looks at a table. “I can carry something. I’m stronger than I look.”",
@@ -434,6 +445,7 @@ export const CHARACTERS: CharacterDef[] = [
               standing: { id: "ned-calhoun", delta: 2 },
               presentCharacter: "ned-calhoun",
               markDialogue: "ned-lost",
+              remember: { id: "ned-calhoun", tag: "shared-meat" },
             },
           },
           {
@@ -445,6 +457,7 @@ export const CHARACTERS: CharacterDef[] = [
               standing: { id: "ned-calhoun", delta: -2 },
               presentCharacter: null,
               markDialogue: "ned-lost",
+              remember: { id: "ned-calhoun", tag: "left-in-storm" },
             },
           },
         ],
@@ -488,6 +501,7 @@ export const CHARACTERS: CharacterDef[] = [
     art: "/art/people/white-shell.jpg",
     home: ["ute-camp", "hot-spring"],
     seasons: ["spring", "summer", "fall"],
+    hours: ["morning", "afternoon"],
     blurb: "Ute woman who knows the spring and who should not be at it.",
     fallback: "White Shell’s hands are busy. She grants you the courtesy of not pretending you are invisible.",
     nodes: [
@@ -505,6 +519,7 @@ export const CHARACTERS: CharacterDef[] = [
               standing: { id: "white-shell", delta: 1 },
               presentCharacter: "white-shell",
               markDialogue: "shell-spring",
+              remember: { id: "white-shell", tag: "sat-at-fire" },
             },
           },
           {
@@ -534,6 +549,7 @@ export const CHARACTERS: CharacterDef[] = [
     art: "/art/people/nawat.jpg",
     home: ["arapaho-ground", "south-park-rim", "elk-wallow"],
     seasons: ["summer", "fall"],
+    hours: ["dawn", "dusk"],
     blurb: "Arapaho scout. Measures you by how you walk on someone else’s ground.",
     fallback: "Nawat’s eyes do the talking. You are still a question.",
     nodes: [
@@ -652,6 +668,7 @@ export const CHARACTERS: CharacterDef[] = [
     art: "/art/people/jean-baptiste.jpg",
     home: ["beaver-meadow", "creek", "timberline"],
     seasons: ["spring", "fall", "winter"],
+    hours: ["dusk", "night"],
     blurb: "Voyageur leftover. Sings to beaver houses. Owes the Company and does not care.",
     fallback: "Jean-Baptiste offers you tobacco that is mostly willow. “Still no sea. Still no sense.”",
     nodes: [
@@ -737,6 +754,7 @@ export const CHARACTERS: CharacterDef[] = [
     art: "/art/people/martha-keene.jpg",
     home: ["homesteader-ruin", "abandoned-cabin"],
     seasons: "all",
+    hours: ["afternoon"],
     blurb: "Neighbor to the cabin claim. Knows which well is poison.",
     fallback: "Martha’s hands are always red from water. “If Eliza sent you, say so. If she didn’t, say that too.”",
     nodes: [
@@ -898,6 +916,7 @@ export const CHARACTERS: CharacterDef[] = [
               hours: 1,
               standing: { id: "alejandro-vega", delta: -2 },
               markDialogue: "vega-wound",
+              remember: { id: "alejandro-vega", tag: "left-in-storm" },
             },
           },
         ],
@@ -1079,6 +1098,7 @@ export const CHARACTERS: CharacterDef[] = [
     art: "/art/people/hannah-briggs.jpg",
     home: ["abandoned-cabin", "homesteader-ruin"],
     seasons: "all",
+    hours: ["morning", "afternoon"],
     blurb: "Midwife. Will stitch a man if he does not waste her thread on pride.",
     fallback: "Hannah wipes her hands. “If you are not bleeding, I have other work.”",
     nodes: [
@@ -1135,6 +1155,7 @@ export const CHARACTERS: CharacterDef[] = [
               meters: { health: 12, warmth: 6 },
               standing: { id: "hannah-briggs", delta: 1 },
               markDialogue: "hannah-later",
+              remember: { id: "hannah-briggs", tag: "sat-at-fire" },
             },
           },
           {
@@ -1335,6 +1356,7 @@ export const CHARACTERS: CharacterDef[] = [
     name: "Peggy Dunne",
     art: "/art/people/peggy-dunne.jpg",
     home: ["lightning-pine", "high-camp", "cache-deadfall"],
+    hours: ["dawn", "morning"],
     seasons: "all",
     blurb: "Leaves marks on the lightning pine. Maybe a cache. Maybe a warning.",
     fallback: "Peggy is always arriving from a direction you did not watch.",
@@ -1365,6 +1387,7 @@ export const CHARACTERS: CharacterDef[] = [
               inventory: { powder: 1, rations: 1 },
               standing: { id: "peggy-dunne", delta: -3 },
               markDialogue: "peggy-blaze",
+              remember: { id: "peggy-dunne", tag: "stole" },
             },
           },
         ],
