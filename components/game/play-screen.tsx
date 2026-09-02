@@ -14,11 +14,48 @@ import {
   seasonLabel,
   weatherLabel,
 } from "@/lib/game/engine";
+import { campHotspots } from "@/lib/game/camp";
 import { CHARACTER_BY_ID } from "@/lib/game/content/characters";
 import { LOCATION_BY_ID } from "@/lib/game/content/locations";
 import { loadGame, saveGame } from "@/lib/game/save";
 import type { Choice, GameState, Kit } from "@/lib/game/types";
+import { timeBand } from "@/lib/game/types";
 import { withBase } from "@/lib/paths";
+
+function timeAtmosphere(state: GameState, fallback: string) {
+  if (state.weather === "blizzard" || state.weather === "storm") return fallback;
+  const band = timeBand(state.hour);
+  if (band === "night") return withBase("/art/atmosphere/night.jpg");
+  if (band === "dawn") return withBase("/art/atmosphere/dawn.jpg");
+  if (band === "dusk") return withBase("/art/atmosphere/dusk.jpg");
+  return fallback;
+}
+
+function timeGrade(hour: number) {
+  switch (timeBand(hour)) {
+    case "night":
+      return "bg-indigo-950/55";
+    case "dawn":
+      return "bg-rose-900/20";
+    case "morning":
+      return "bg-sky-900/10";
+    case "afternoon":
+      return "bg-transparent";
+    case "dusk":
+      return "bg-amber-950/30";
+  }
+}
+
+const SPOT_POS: Record<string, { left: string; top: string }> = {
+  "camp-pitch": { left: "46%", top: "44%" },
+  "camp-lean": { left: "18%", top: "30%" },
+  "camp-fire": { left: "34%", top: "58%" },
+  "camp-wood": { left: "14%", top: "62%" },
+  "camp-cache": { left: "70%", top: "56%" },
+  "camp-rack": { left: "76%", top: "36%" },
+  "camp-pot": { left: "46%", top: "68%" },
+  "camp-strike": { left: "82%", top: "74%" },
+};
 
 function Meter({ label, value, warn }: { label: string; value: number; warn?: boolean }) {
   return (
@@ -75,6 +112,22 @@ function Status({ state }: { state: GameState }) {
         Eye {state.traits.eye} · Grit {state.traits.grit} · Savvy {state.traits.savvy} · Hands {state.traits.hands}
       </p>
       {person && <p className="text-xs text-amber-100/80">Here: {person.name}</p>}
+      {state.camp && (
+        <p className="text-xs text-amber-100/70">
+          Camp at {LOCATION_BY_ID[state.camp.locationId]?.name ?? state.camp.locationId}
+          {state.camp.locationId === state.locationId ? " · here" : ""}
+          {state.camp.smoke > 0 ? ` · smoke ${state.camp.smoke}` : ""}
+          {state.camp.jobs.some((j) => j.hoursLeft <= 0) ? " · work ready" : ""}
+        </p>
+      )}
+      {state.camp && state.camp.locationId === state.locationId && (
+        <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-xs text-stone-400">
+          <span>Cache meat {state.camp.cache.rations}</span>
+          <span>Cache water {state.camp.cache.water}</span>
+          <span>Cache wood {state.camp.cache.firewood}</span>
+          <span>Cache pelts {state.camp.cache.pelts}</span>
+        </div>
+      )}
       {state.skirmish && (
         <div className="rounded-md border border-red-300/30 bg-red-950/40 p-2 text-xs text-red-100">
           <p className="font-medium">Skirmish</p>
@@ -148,7 +201,14 @@ export function PlayScreen() {
   }
 
   const travel = choices.filter((c) => c.action.type === "travel");
-  const rest = choices.filter((c) => c.action.type !== "travel");
+  const spots = !state.activeEncounterId && !state.skirmish ? campHotspots(state) : [];
+  const spotIds = new Set(spots.map((s) => s.id));
+  const restAll = choices.filter((c) => c.action.type !== "travel");
+  const campInMenu = restAll.filter((c) => spotIds.has(c.id));
+  const rest = [
+    ...restAll.filter((c) => !spotIds.has(c.id)),
+    ...campInMenu.slice(0, 2),
+  ];
 
   return (
     <div className="relative min-h-dvh overflow-hidden text-stone-100">
@@ -157,13 +217,14 @@ export function PlayScreen() {
         style={{ backgroundImage: `url(${art.location})` }}
       />
       <div
-        className="absolute inset-0 bg-cover bg-center mix-blend-multiply opacity-40"
-        style={{ backgroundImage: `url(${art.atmosphere})` }}
+        className="absolute inset-0 bg-cover bg-center mix-blend-multiply opacity-45"
+        style={{ backgroundImage: `url(${timeAtmosphere(state, art.atmosphere)})` }}
       />
+      <div className={`absolute inset-0 transition-colors duration-700 ${timeGrade(state.hour)}`} />
       <div className="absolute inset-0 bg-gradient-to-t from-black via-black/55 to-black/25" />
 
       <div className="relative z-10 mx-auto grid min-h-dvh max-w-6xl gap-6 px-4 py-4 lg:grid-cols-[1fr_280px] lg:items-end">
-        <div className="flex flex-col justify-end gap-4 pb-4">
+        <div className="relative flex flex-col justify-end gap-4 pb-4">
           {art.portrait && (
             <div className="h-40 w-28 overflow-hidden rounded-md border border-white/20 shadow-lg sm:h-52 sm:w-36">
               {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -184,6 +245,42 @@ export function PlayScreen() {
               </div>
             ))}
           </div>
+          {spots.length > 0 && (
+            <>
+              <div className="pointer-events-none absolute inset-0 z-[5] max-lg:hidden">
+                {spots.map((c) => {
+                  const pos = SPOT_POS[c.id] ?? { left: "50%", top: "50%" };
+                  return (
+                    <button
+                      key={`pin-${c.id}`}
+                      type="button"
+                      disabled={c.disabled}
+                      title={c.hint ?? c.label}
+                      onClick={() => act(c)}
+                      className="pointer-events-auto absolute max-w-[10rem] -translate-x-1/2 -translate-y-1/2 rounded-full border border-amber-100/40 bg-black/55 px-3 py-1.5 text-left text-[12px] leading-snug text-amber-50 shadow-lg backdrop-blur-sm transition hover:border-amber-200/80 hover:bg-black/75 disabled:opacity-40"
+                      style={{ left: pos.left, top: pos.top }}
+                    >
+                      {c.label}
+                    </button>
+                  );
+                })}
+              </div>
+              <div className="flex flex-wrap gap-2 lg:hidden">
+                {spots.map((c) => (
+                  <Button
+                    key={`spot-${c.id}`}
+                    size="sm"
+                    variant="secondary"
+                    disabled={c.disabled}
+                    title={c.hint ?? "Camp"}
+                    onClick={() => act(c)}
+                  >
+                    {c.label}
+                  </Button>
+                ))}
+              </div>
+            </>
+          )}
           <div className="flex flex-wrap gap-2">
             {rest.map((c) => (
               <Button

@@ -9,7 +9,13 @@ export function loadGame(): GameState | null {
   try {
     const raw = localStorage.getItem(SAVE_KEY);
     if (!raw) return null;
-    return JSON.parse(raw) as GameState;
+    const parsed = JSON.parse(raw) as GameState;
+    return {
+      ...parsed,
+      camp: parsed.camp ?? null,
+      memories: parsed.memories ?? {},
+      openingId: parsed.openingId ?? "legacy",
+    };
   } catch {
     return null;
   }

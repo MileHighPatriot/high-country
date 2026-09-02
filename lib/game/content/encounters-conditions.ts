@@ -19,6 +19,7 @@ export const CONDITION_ENCOUNTERS: EncounterDef[] = [
           presentCharacter: "silas-crowe",
           extraAdd: "willow-tobacco",
           standing: { id: "silas-crowe", delta: 1 },
+          remember: { id: "silas-crowe", tag: "sat-at-fire" },
         },
       },
       {

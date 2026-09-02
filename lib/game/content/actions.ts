@@ -1,7 +1,10 @@
+import { campMenuChoices } from "@/lib/game/camp";
 import { CHARACTER_BY_ID } from "@/lib/game/content/characters";
 import { LOCATION_BY_ID } from "@/lib/game/content/locations";
 import type { Choice, GameState, LocationId, TimeBand, Weather } from "@/lib/game/types";
 import { timeBand } from "@/lib/game/types";
+
+export { campHotspots } from "@/lib/game/camp";
 
 function mulberry32(seed: number) {
   let t = seed >>> 0;
@@ -589,6 +592,9 @@ function travelLabel(state: GameState, to: LocationId, trailName: string, rng: (
     if (known) return pick(rng, [`Toward ${dest?.name ?? to}, careful`, `Feel for ${dest?.name ?? to}`]);
     return pick(rng, [`Take ${trailName} anyway`, `The unknown trail in this weather`]);
   }
+  if (state.camp && to === state.camp.locationId) {
+    return pick(rng, ["Back to your camp", "The trail home to your fire", "Back to the ring of stone"]);
+  }
   if (to === "high-camp") return pick(rng, ["Back to the lean-to", "Home to high camp", trailName]);
   if (known) {
     return pick(rng, [`Toward ${dest?.name ?? to}`, `The trail to ${dest?.name ?? to}`, trailName]);
@@ -596,7 +602,8 @@ function travelLabel(state: GameState, to: LocationId, trailName: string, rng: (
   return `Take ${trailName}`;
 }
 
-function isHomeward(from: LocationId, to: LocationId, known: LocationId[]): boolean {
+function isHomeward(from: LocationId, to: LocationId, known: LocationId[], campAt?: LocationId | null): boolean {
+  if (campAt && to === campAt) return true;
   if (to === "high-camp") return true;
   if (from === "high-camp") return false;
   if (!known.includes(to)) return false;
@@ -618,7 +625,9 @@ function pickTravelEdges(state: GameState, rng: () => number) {
   const add = (e: (typeof edges)[number]) => {
     if (!picked.some((p) => p.to === e.to)) picked.push(e);
   };
-  const homeward = edges.filter((e) => isHomeward(state.locationId, e.to, state.knownLocations));
+  const homeward = edges.filter((e) =>
+    isHomeward(state.locationId, e.to, state.knownLocations, state.camp?.locationId),
+  );
   if (homeward.length) add(pick(rng, homeward));
 
   const pool = (
@@ -654,7 +663,7 @@ export function campChoices(state: GameState): Choice[] {
     state.weather === "snow" ||
     state.weather === "blizzard" ||
     state.weather === "storm";
-  const shelter = tags.includes("shelter") || state.locationId === "high-camp";
+  const shelter = hasShelter(state) || tags.includes("shelter");
   const exhausted = state.meters.energy < 35;
   const starving = state.meters.hunger < 30;
   const parched = state.meters.thirst < 30;
@@ -888,6 +897,11 @@ export function campChoices(state: GameState): Choice[] {
     if (state.inventory.water < 2 || parched) good.push(water);
     else if (rng() < 0.55) flavor.push(water);
   }
+  const campActs = campMenuChoices(state, rng);
+  for (const c of campActs.must) must.push(c);
+  for (const c of campActs.good) good.push(c);
+  for (const c of campActs.flavor) flavor.push(c);
+
   if (tags.includes("wood")) {
     const woodHard = night || blizzard;
     const wood: Choice = {
@@ -962,6 +976,7 @@ export function hasShelter(state: GameState): boolean {
   return Boolean(
     loc?.tags.includes("shelter") ||
       state.locationId === "high-camp" ||
-      state.inventory.extras.includes("snow-hole"),
+      state.inventory.extras.includes("snow-hole") ||
+      (state.camp?.leanTo && state.camp.locationId === state.locationId),
   );
 }

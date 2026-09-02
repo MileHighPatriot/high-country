@@ -19,7 +19,44 @@ export type EncounterTrigger =
   | "pray"
   | "snares"
   | "shelter"
-  | "camp";
+  | "camp"
+  | "smoke";
+
+export type CampPiece = "leanTo" | "fireRing" | "woodpile" | "cachePit" | "dryingRack" | "pot";
+export type CampStowItem = "rations" | "water" | "firewood" | "pelts" | "powder";
+export type CampJobKind = "dry-meat" | "bank-coals" | "set-snares" | "smoke-hide";
+
+export interface CampCache {
+  rations: number;
+  water: number;
+  firewood: number;
+  pelts: number;
+  powder: number;
+  extras: string[];
+}
+
+export interface CampJob {
+  id: string;
+  kind: CampJobKind;
+  hoursLeft: number;
+  startedOnDay: number;
+  payload?: number;
+}
+
+export interface CampSite {
+  locationId: LocationId;
+  leanTo: boolean;
+  fireRing: boolean;
+  woodpile: boolean;
+  cachePit: boolean;
+  dryingRack: boolean;
+  pot: boolean;
+  cache: CampCache;
+  jobs: CampJob[];
+  smoke: number; // 0–5
+}
+
+export const PACK_LIMITS = { rations: 6, water: 4, firewood: 4, pelts: 4, powder: 8 } as const;
 export type LocationTag = "water" | "wood" | "shelter" | "game" | "trade";
 export type DeathCause =
   | "starvation"
@@ -127,6 +164,12 @@ export interface GameState {
   campfire: boolean;
   /** Hours of burn left. Missing on older saves — treat a live fire as a few hours remaining. */
   campfireHours?: number;
+  /** Missing on older saves — treat as no camp. */
+  camp?: CampSite | null;
+  /** characterId -> memory tags. Missing on older saves. */
+  memories?: Record<string, string[]>;
+  /** Flavor/debug id for the opening script. Missing on older saves. */
+  openingId?: string;
   dead: DeathRecord | null;
   rngSeed: number;
 }
@@ -154,6 +197,14 @@ export type GameAction =
   | { type: "shelterUp" }
   | { type: "pray" }
   | { type: "restWatch" }
+  | { type: "pitchCamp" }
+  | { type: "strikeCamp" }
+  | { type: "build"; piece: CampPiece }
+  | { type: "stow"; item: CampStowItem; amount?: number }
+  | { type: "takeFromCache"; item: CampStowItem; amount?: number }
+  | { type: "cook" }
+  | { type: "startJob"; kind: CampJobKind }
+  | { type: "collectJob"; id: string }
   | { type: "encounterChoice"; optionId: string }
   | { type: "skirmish"; move: SkirmishMove };
 
@@ -193,6 +244,7 @@ export interface Outcome {
   clearFire?: boolean;
   /** Extra sentence; concatenated onto `text` when applying. */
   scene?: string;
+  remember?: { id: CharacterId; tag: string };
 }
 
 export interface EncounterChoice {
@@ -241,6 +293,8 @@ export interface DialogueNode {
   minStanding?: number;
   requiresExtra?: string;
   unlessExtra?: string;
+  requiresMemory?: string;
+  unlessMemory?: string;
   text: string;
   choices: EncounterChoice[];
 }
@@ -254,6 +308,8 @@ export interface CharacterDef {
   blurb: string;
   fallback: string;
   nodes: DialogueNode[];
+  /** If set, they only appear in these bands at their home places. Omitted: any hour. */
+  hours?: TimeBand[];
 }
 
 export const DAYS_PER_SEASON = 30;
