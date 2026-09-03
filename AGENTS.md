@@ -8,6 +8,15 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 
 <!-- END:nextjs-agent-rules -->
 
+# Save (MileHigh)
+
+When they say **save**, do not stop at a clean working tree. Update every origin:
+
+1. Commit any uncommitted work.
+2. `git push -u origin <branch>` (GitHub origin).
+3. Create or update the GitHub pull request.
+4. Register the branch with Cursor (`SetActiveBranch`) so Cursor origin/PR views match.
+
 # Grok Build (terminal)
 
 MileHigh uses Grok Build as the **`grok` CLI in the terminal**, not the desktop app and not a Cursor Task stand-in.
