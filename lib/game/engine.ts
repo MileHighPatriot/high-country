@@ -125,6 +125,13 @@ export function hourLabel(hour: number): string {
   return `${twelve}:00 ${suffix}`;
 }
 
+/** Hours a wait stance spends. Night is shorter; blizzard and open day sit longer. */
+export function waitHours(state: GameState): number {
+  if (state.weather === "blizzard") return 4;
+  if (timeBand(state.hour) === "night") return 3;
+  return 4;
+}
+
 export function dateLabel(state: GameState): string {
   const dayInSeason = (state.dayOfYear % DAYS_PER_SEASON) + 1;
   return `Year ${state.year + 1}, ${seasonLabel(state.season)}, day ${dayInSeason}`;
@@ -1864,17 +1871,27 @@ export function applyAction(state: GameState, action: GameAction): GameState {
       );
     }
     case "wait": {
-      const hours = state.weather === "blizzard" ? 3 : timeBand(state.hour) === "night" ? 2 : 3;
+      const hours = waitHours(state);
       let next = advanceTime(state, hours);
       if (next.dead) return appendLog(next, "You wait. The weather finishes the sentence.");
       const rng = mulberry32(next.rngSeed);
       next = { ...next, rngSeed: nextSeed(next.rngSeed) };
       if (state.weather === "wind" && rng() < 0.22) next.weather = "clear";
-      if (state.weather === "storm" && rng() < 0.18) next.weather = "wind";
+      else if (state.weather === "storm" && rng() < 0.18) next.weather = "wind";
+      else if (state.weather === "clear" && rng() < 0.08) next.weather = pickWeather(next.season, rng);
+      const flavor = waitFlavor(next);
+      next = appendLog(next, flavor);
+      if (!next.presentCharacterId && rng() < 0.15) {
+        next = maybePresentCharacter(next);
+      }
       const enc = pickEncounter(next, "wait");
-      if (isUniqueStory(enc)) return beginEncounter(next, enc);
-      next = appendLog(next, waitFlavor(next));
-      return maybeSmokeRipple(next);
+      if (isUniqueStory(enc) && rng() < 0.22) {
+        const flavorLog = next.log;
+        const begun = beginEncounter(next, enc);
+        const encLine = begun.log[begun.log.length - 1];
+        return { ...begun, log: encLine ? [...flavorLog, encLine].slice(-2) : flavorLog };
+      }
+      return next;
     }
     case "restWatch": {
       const hours = 1 + (mulberry32(state.rngSeed)() < 0.4 ? 1 : 0);
@@ -2086,15 +2103,19 @@ export function applyAction(state: GameState, action: GameAction): GameState {
   }
 }
 
+function asHero(choice: Choice): Choice {
+  return { ...choice, tier: "hero" };
+}
+
 export function getChoices(state: GameState): Choice[] {
   if (state.dead) return [];
   if (state.skirmish) {
     return [
-      { id: "fire", label: "Aim / fire", hint: "Eye, costs powder", action: { type: "skirmish", move: "fire" } },
-      { id: "close", label: "Close / knife", hint: "Hands", action: { type: "skirmish", move: "close" } },
-      { id: "cover", label: "Take cover", action: { type: "skirmish", move: "cover" } },
-      { id: "item", label: "Use ration or water", action: { type: "skirmish", move: "item" } },
-      { id: "flee", label: "Flee", hint: "Grit", action: { type: "skirmish", move: "flee" } },
+      asHero({ id: "fire", label: "Aim / fire", hint: "Eye, costs powder", action: { type: "skirmish", move: "fire" } }),
+      asHero({ id: "close", label: "Close / knife", hint: "Hands", action: { type: "skirmish", move: "close" } }),
+      asHero({ id: "cover", label: "Take cover", action: { type: "skirmish", move: "cover" } }),
+      asHero({ id: "item", label: "Use ration or water", action: { type: "skirmish", move: "item" } }),
+      asHero({ id: "flee", label: "Flee", hint: "Grit", action: { type: "skirmish", move: "flee" } }),
     ];
   }
   if (state.pendingRoll) {
@@ -2104,22 +2125,24 @@ export function getChoices(state: GameState): Choice[] {
         .filter((c) => !c.check)
         .map((c) => {
           const afford = choiceAffordable(state, c);
-          return {
+          return asHero({
             id: c.id,
             label: c.label,
             disabled: !afford,
             hint: "Leave the die on the table",
             action: { type: "encounterChoice" as const, optionId: c.id },
-          };
+          });
         }) ?? [];
     if (state.pendingRoll.resume) {
-      retreats.push({
-        id: "cancel-die",
-        label: "Let it go",
-        disabled: false,
-        hint: "Leave the die on the table",
-        action: { type: "cancelDie" as const },
-      });
+      retreats.push(
+        asHero({
+          id: "cancel-die",
+          label: "Let it go",
+          disabled: false,
+          hint: "Leave the die on the table",
+          action: { type: "cancelDie" as const },
+        }),
+      );
     }
     return retreats;
   }
@@ -2135,7 +2158,7 @@ export function getChoices(state: GameState): Choice[] {
               .map(([k, v]) => `${v} ${k}`)
               .join(", ")}`
           : undefined;
-      return {
+      return asHero({
         id: c.id,
         label: c.label,
         disabled: !afford,
@@ -2145,7 +2168,7 @@ export function getChoices(state: GameState): Choice[] {
             : `d20 + ${c.check.trait} vs ${c.check.dc}`
           : costHint,
         action: { type: "encounterChoice" as const, optionId: c.id },
-      };
+      });
     });
   }
   return campChoices(state);

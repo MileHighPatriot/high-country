@@ -644,8 +644,8 @@ function pickTravelEdges(state: GameState, rng: () => number) {
 const FISH_PLACES = new Set(["creek", "frozen-fall", "beaver-meadow", "hot-spring"]);
 
 /**
- * Contextual camp menu: about 4–7 actions, never the vending-machine full set.
- * Seeded from rngSeed + day + hour + place so the same bench at a different hour feels different.
+ * Idle verbs for a bench. Wait is always the hero stance; routine chores are tagged
+ * for the Tend camp overflow. Seeded so the same ground at a different hour still shifts.
  */
 export function campChoices(state: GameState): Choice[] {
   const rng = campRng(state);
@@ -658,11 +658,6 @@ export function campChoices(state: GameState): Choice[] {
   const afternoon = band === "afternoon";
   const dusk = band === "dusk";
   const blizzard = state.weather === "blizzard";
-  const hardWeather =
-    state.weather === "wind" ||
-    state.weather === "snow" ||
-    state.weather === "blizzard" ||
-    state.weather === "storm";
   const shelter = hasShelter(state) || tags.includes("shelter");
   const exhausted = state.meters.energy < 35;
   const starving = state.meters.hunger < 30;
@@ -679,8 +674,24 @@ export function campChoices(state: GameState): Choice[] {
       id: "talk",
       label: p ? `Talk to ${p.name}` : "Talk",
       action: { type: "talk" },
+      tier: "hero",
     });
   }
+
+  must.push({
+    id: "wait",
+    label: "Let time pass",
+    hint: blizzard ? "Four hours in this white" : night ? "Three hours of dark" : "Four hours",
+    action: { type: "wait" },
+    tier: "hero",
+  });
+  flavor.push({
+    id: "watch",
+    label: "Watch a while",
+    hint: "One or two hours",
+    action: { type: "restWatch" },
+    tier: "routine",
+  });
 
   const rationsOnHand = accessibleCount(state, "rations");
   const waterOnHand = accessibleCount(state, "water");
@@ -779,27 +790,6 @@ export function campChoices(state: GameState): Choice[] {
     };
     if (blizzard) must.push(hole);
     else good.push(hole);
-  }
-
-  const waitOk = hardWeather || night || exhausted;
-  if (waitOk) {
-    const wait: Choice = {
-      id: "wait",
-      label: blizzard
-        ? pick(rng, ["Wait the white down", "Hunker and count breaths"])
-        : night
-          ? pick(rng, ["Wait out the dark", "Sit the night down"])
-          : pick(rng, ["Wait out the weather", "Hunker until it eases"]),
-      action: { type: "wait" },
-    };
-    if (blizzard || (hardWeather && exhausted)) must.push(wait);
-    else good.push(wait);
-  } else if (state.weather === "clear" && rng() < 0.7) {
-    flavor.push({
-      id: "watch",
-      label: pick(rng, ["Sit and watch the country", "Rest your legs", "Let the hour go"]),
-      action: { type: "restWatch" },
-    });
   }
 
   const searchChance = blizzard
@@ -915,7 +905,6 @@ export function campChoices(state: GameState): Choice[] {
     else if (rng() < (woodHard ? 0.35 : 0.55)) flavor.push(wood);
   }
 
-  // Assemble 3–5 camp actions, then 1–3 trails, total 4–7.
   const camp: Choice[] = [];
   const seen = new Set<string>();
   const take = (c: Choice) => {
@@ -924,51 +913,51 @@ export function campChoices(state: GameState): Choice[] {
     camp.push(c);
   };
   for (const c of must) take(c);
-
-  const shuffle = <T,>(arr: T[]) => {
-    const a = [...arr];
-    for (let i = a.length - 1; i > 0; i--) {
-      const j = Math.floor(rng() * (i + 1));
-      [a[i], a[j]] = [a[j]!, a[i]!];
-    }
-    return a;
-  };
-
-  const campTarget = 3 + Math.floor(rng() * 3); // 3–5 before travel
-  for (const c of shuffle(good)) {
-    if (camp.length >= campTarget) break;
-    take(c);
-  }
-  for (const c of shuffle(flavor)) {
-    if (camp.length >= campTarget) break;
-    take(c);
-  }
+  for (const c of good) take(c);
+  for (const c of flavor) take(c);
 
   const travels = pickTravelEdges(state, rng).map((edge) => ({
     id: `go-${edge.to}`,
     label: travelLabel(state, edge.to, edge.trailName, rng),
     hint: `${edge.hours}+ hours`,
     action: { type: "travel" as const, to: edge.to },
+    tier: "travel" as const,
   }));
 
-  let out = [...camp, ...travels];
-  if (out.length > 7) {
-    const extraTravel = out.filter((c) => c.action.type === "travel").slice(2);
-    const drop = new Set(extraTravel.map((c) => c.id));
-    out = out.filter((c) => !drop.has(c.id)).slice(0, 7);
-  }
-  if (out.length < 4) {
-    for (const c of shuffle([...good, ...flavor])) {
-      if (out.length >= 4) break;
-      if (!seen.has(c.id)) {
-        seen.add(c.id);
-        const travelsNow = out.filter((x) => x.action.type === "travel");
-        const rest = out.filter((x) => x.action.type !== "travel");
-        out = [...rest, c, ...travelsNow];
-      }
+  return tagCampTiers(state, [...camp, ...travels]);
+}
+
+function tagCampTiers(state: GameState, choices: Choice[]): Choice[] {
+  const starving = state.meters.hunger < 30;
+  const parched = state.meters.thirst < 30;
+  const blizzard = state.weather === "blizzard";
+  const band = timeBand(state.hour);
+  const night = band === "night";
+  const dusk = band === "dusk";
+  const exhausted = state.meters.energy < 35;
+  return choices.map((c) => {
+    if (c.tier) return c;
+    const t = c.action.type;
+    if (t === "travel") return { ...c, tier: "travel" };
+    if (
+      t === "wait" ||
+      t === "talk" ||
+      t === "hunt" ||
+      t === "fish" ||
+      t === "scout" ||
+      t === "pitchCamp"
+    ) {
+      return { ...c, tier: "hero" };
     }
-  }
-  return out;
+    if (t === "eat" && starving) return { ...c, tier: "hero" };
+    if (t === "drink" && parched) return { ...c, tier: "hero" };
+    if (t === "sleep" && (night || exhausted || blizzard)) return { ...c, tier: "hero" };
+    if ((t === "makeFire" || t === "tendFire") && (blizzard || night || dusk || state.meters.warmth < 40)) {
+      return { ...c, tier: "hero" };
+    }
+    if (t === "shelterUp" && blizzard) return { ...c, tier: "hero" };
+    return { ...c, tier: "routine" };
+  });
 }
 
 export function hasShelter(state: GameState): boolean {

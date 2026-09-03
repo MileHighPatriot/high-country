@@ -1,9 +1,23 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import { Cinema } from "@/components/game/cinema";
+import { FateDie } from "@/components/game/fate-die";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+  SheetTrigger,
+} from "@/components/ui/sheet";
+import { campHotspots } from "@/lib/game/camp";
+import { cinemaAfterAction, type CinemaSequence } from "@/lib/game/cinema";
+import { CHARACTER_BY_ID } from "@/lib/game/content/characters";
+import { LOCATION_BY_ID } from "@/lib/game/content/locations";
 import {
   applyAction,
   artFor,
@@ -14,13 +28,10 @@ import {
   seasonLabel,
   weatherLabel,
 } from "@/lib/game/engine";
-import { campHotspots } from "@/lib/game/camp";
-import { CHARACTER_BY_ID } from "@/lib/game/content/characters";
-import { LOCATION_BY_ID } from "@/lib/game/content/locations";
 import { loadGame, saveGame } from "@/lib/game/save";
-import { FateDie } from "@/components/game/fate-die";
-import type { Choice, GameState, Kit } from "@/lib/game/types";
+import type { Choice, GameAction, GameState, Kit } from "@/lib/game/types";
 import { timeBand } from "@/lib/game/types";
+import { cn } from "@/lib/utils";
 import { withBase } from "@/lib/paths";
 
 function timeAtmosphere(state: GameState, fallback: string) {
@@ -45,6 +56,57 @@ function timeGrade(hour: number) {
     case "dusk":
       return "bg-amber-950/30";
   }
+}
+
+function choiceTier(choice: Choice): NonNullable<Choice["tier"]> {
+  if (choice.tier) return choice.tier;
+  if (choice.action.type === "travel") return "travel";
+  return "hero";
+}
+
+function actionKey(choice: Choice) {
+  return JSON.stringify(choice.action);
+}
+
+function isUrgentBeat(state: GameState) {
+  return Boolean(state.dead || state.skirmish || state.pendingRoll || state.activeEncounterId);
+}
+
+function CrossfadePlate({
+  src,
+  className,
+  ken,
+}: {
+  src: string;
+  className?: string;
+  ken?: boolean;
+}) {
+  const [current, setCurrent] = useState(src);
+  const [prev, setPrev] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (src === current) return;
+    setPrev(current);
+    setCurrent(src);
+    const t = window.setTimeout(() => setPrev(null), 1900);
+    return () => window.clearTimeout(t);
+  }, [src, current]);
+
+  return (
+    <div className={cn("absolute inset-0 overflow-hidden", className)}>
+      {prev && (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img src={prev} alt="" className="absolute inset-0 h-full w-full object-cover" />
+      )}
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img
+        key={current}
+        src={current}
+        alt=""
+        className={cn("absolute inset-0 h-full w-full object-cover", prev && "hc-plate-fade-in", ken && "hc-plate-breathe")}
+      />
+    </div>
+  );
 }
 
 function Meter({ label, value, warn }: { label: string; value: number; warn?: boolean }) {
@@ -136,6 +198,10 @@ export function PlayScreen() {
   const router = useRouter();
   const params = useSearchParams();
   const [state, setState] = useState<GameState | null>(null);
+  const [cinema, setCinema] = useState<CinemaSequence | null>(null);
+  const [choiceHold, setChoiceHold] = useState(false);
+  const [tendOpen, setTendOpen] = useState(false);
+  const holdTimer = useRef<number>(0);
 
   useEffect(() => {
     const existing = loadGame();
@@ -154,12 +220,36 @@ export function PlayScreen() {
     if (state) saveGame(state);
   }, [state]);
 
+  useEffect(() => {
+    return () => window.clearTimeout(holdTimer.current);
+  }, []);
+
   const choices = useMemo(() => (state ? getChoices(state) : []), [state]);
   const art = state ? artFor(state) : null;
 
+  function commit(prev: GameState, action: GameAction) {
+    const next = applyAction(prev, action);
+    const seq = cinemaAfterAction(prev, next);
+    setState(next);
+    window.clearTimeout(holdTimer.current);
+    if (seq) {
+      setCinema(seq);
+      setChoiceHold(false);
+      setTendOpen(false);
+      return;
+    }
+    if (action.type === "wait" && !isUrgentBeat(next) && !next.dead) {
+      setChoiceHold(true);
+      holdTimer.current = window.setTimeout(() => setChoiceHold(false), 1400);
+    } else {
+      setChoiceHold(false);
+    }
+  }
+
   function act(choice: Choice) {
     if (!state || choice.disabled) return;
-    setState(applyAction(state, choice.action));
+    setTendOpen(false);
+    commit(state, choice.action);
   }
 
   if (!state || !art) {
@@ -170,7 +260,7 @@ export function PlayScreen() {
     );
   }
 
-  if (state.dead) {
+  if (state.dead && !cinema) {
     return (
       <div className="relative min-h-dvh text-stone-100">
         <div className="absolute inset-0 bg-cover bg-center" style={{ backgroundImage: `url(${withBase("/art/death.jpg")})` }} />
@@ -190,22 +280,22 @@ export function PlayScreen() {
     );
   }
 
-  const travel = choices.filter((c) => c.action.type === "travel");
   const spots = !state.activeEncounterId && !state.skirmish ? campHotspots(state) : [];
-  const spotIds = new Set(spots.map((s) => s.id));
-  const rest = choices.filter((c) => c.action.type !== "travel" && !spotIds.has(c.id));
+  const knownKeys = new Set(choices.map(actionKey));
+  const hero = choices.filter((c) => choiceTier(c) === "hero");
+  const travel = choices.filter((c) => choiceTier(c) === "travel" || c.action.type === "travel");
+  const routineFromChoices = choices.filter((c) => choiceTier(c) === "routine");
+  const routineSpots = spots.filter((s) => s.action.type !== "pitchCamp" && !knownKeys.has(actionKey(s)));
+  const routine = [...routineFromChoices, ...routineSpots];
+  const idle = !isUrgentBeat(state);
+  const showHero = idle ? hero : hero.filter((c) => c.action.type !== "travel");
+  const atmosphere = timeAtmosphere(state, art.atmosphere);
 
   return (
     <div className="relative min-h-dvh overflow-hidden text-stone-100">
-      <div
-        className="absolute inset-0 bg-cover bg-center transition-[background-image] duration-700"
-        style={{ backgroundImage: `url(${art.location})` }}
-      />
-      <div
-        className="absolute inset-0 bg-cover bg-center mix-blend-multiply opacity-45"
-        style={{ backgroundImage: `url(${timeAtmosphere(state, art.atmosphere)})` }}
-      />
-      <div className={`absolute inset-0 transition-colors duration-700 ${timeGrade(state.hour)}`} />
+      <CrossfadePlate src={art.location} ken />
+      <CrossfadePlate src={atmosphere} className="mix-blend-multiply opacity-45" />
+      <div className={`absolute inset-0 transition-colors duration-[1800ms] ${timeGrade(state.hour)}`} />
       <div className="absolute inset-0 bg-gradient-to-t from-black via-black/55 to-black/25" />
 
       <div className="relative z-10 mx-auto grid min-h-dvh max-w-6xl gap-6 px-4 py-4 lg:grid-cols-[1fr_280px] lg:items-end">
@@ -230,57 +320,82 @@ export function PlayScreen() {
               </div>
             ))}
           </div>
-          {spots.length > 0 && (
-            <div className="relative z-20 space-y-2">
-              <p className="text-[11px] tracking-[0.25em] text-amber-100/60 uppercase">Camp</p>
+          {state.pendingRoll ? (
+            <FateDie
+              pending={state.pendingRoll}
+              retreats={showHero}
+              scene={state.log[state.log.length - 1]?.text}
+              onCast={() => setState((s) => (s ? applyAction(s, { type: "castDie" }) : s))}
+              onSettled={() => {
+                setState((s) => {
+                  if (!s) return s;
+                  const next = applyAction(s, { type: "finishDie" });
+                  const seq = cinemaAfterAction(s, next);
+                  if (seq) {
+                    window.setTimeout(() => setCinema(seq), 0);
+                  }
+                  return next;
+                });
+              }}
+              onRetreat={act}
+            />
+          ) : (
+            <div className={cn("hc-choices space-y-3", choiceHold && "is-held")}>
               <div className="flex flex-wrap gap-2">
-                {spots.map((c) => (
+                {showHero.map((c) => (
                   <Button
-                    key={`spot-${c.id}`}
-                    size="sm"
-                    variant="secondary"
+                    key={c.id}
+                    size="lg"
+                    variant={c.action.type === "skirmish" && c.id === "flee" ? "secondary" : "default"}
                     disabled={c.disabled}
-                    title={c.hint ?? "Camp"}
+                    title={c.hint}
                     onClick={() => act(c)}
                   >
                     {c.label}
                   </Button>
                 ))}
               </div>
-            </div>
-          )}
-          {state.pendingRoll ? (
-            <FateDie
-              pending={state.pendingRoll}
-              retreats={rest}
-              scene={state.log[state.log.length - 1]?.text}
-              onCast={() => setState((s) => (s ? applyAction(s, { type: "castDie" }) : s))}
-              onSettled={() => setState((s) => (s ? applyAction(s, { type: "finishDie" }) : s))}
-              onRetreat={act}
-            />
-          ) : (
-            <div className="flex flex-wrap gap-2">
-              {rest.map((c) => (
-                <Button
-                  key={c.id}
-                  size="lg"
-                  variant={c.action.type === "skirmish" && c.id === "flee" ? "secondary" : "default"}
-                  disabled={c.disabled}
-                  title={c.hint}
-                  onClick={() => act(c)}
-                >
-                  {c.label}
-                </Button>
-              ))}
-            </div>
-          )}
-          {travel.length > 0 && (
-            <div className="flex flex-wrap gap-2">
-              {travel.map((c) => (
-                <Button key={c.id} size="sm" variant="outline" title={c.hint} onClick={() => act(c)}>
-                  {c.label}
-                </Button>
-              ))}
+              {idle && routine.length > 0 && (
+                <Sheet open={tendOpen} onOpenChange={setTendOpen}>
+                  <SheetTrigger className="inline-flex h-8 items-center rounded-lg border border-white/20 bg-black/40 px-3 text-[0.8rem] tracking-[0.18em] text-amber-100/75 uppercase hover:border-amber-200/40 hover:text-amber-50">
+                    Tend camp
+                  </SheetTrigger>
+                  <SheetContent
+                    side="bottom"
+                    className="border-white/15 bg-black/92 text-stone-100 sm:max-w-none"
+                  >
+                    <SheetHeader>
+                      <SheetTitle className="text-amber-50">Tend camp</SheetTitle>
+                      <SheetDescription className="text-stone-400">
+                        Small work. The mountain keeps the hours.
+                      </SheetDescription>
+                    </SheetHeader>
+                    <div className="flex flex-wrap gap-2 px-4 pb-6">
+                      {routine.map((c) => (
+                        <Button
+                          key={c.id}
+                          size="sm"
+                          variant="secondary"
+                          disabled={c.disabled}
+                          title={c.hint}
+                          onClick={() => act(c)}
+                        >
+                          {c.label}
+                        </Button>
+                      ))}
+                    </div>
+                  </SheetContent>
+                </Sheet>
+              )}
+              {travel.length > 0 && (
+                <div className="flex flex-wrap gap-2">
+                  {travel.map((c) => (
+                    <Button key={c.id} size="sm" variant="outline" title={c.hint} onClick={() => act(c)}>
+                      {c.label}
+                    </Button>
+                  ))}
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -288,6 +403,7 @@ export function PlayScreen() {
           <Status state={state} />
         </div>
       </div>
+      {cinema && <Cinema sequence={cinema} onDone={() => setCinema(null)} />}
     </div>
   );
 }

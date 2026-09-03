@@ -1,6 +1,7 @@
 import { emptyCamp } from "@/lib/game/camp";
+import { cinemaAfterAction, deathCinema, seasonCinema } from "@/lib/game/cinema";
 import { CHARACTER_BY_ID } from "@/lib/game/content/characters";
-import { applyAction, advanceTime, createGame, getChoices } from "@/lib/game/engine";
+import { applyAction, advanceTime, createGame, getChoices, waitHours } from "@/lib/game/engine";
 import type { GameState } from "@/lib/game/types";
 import { PACK_LIMITS } from "@/lib/game/types";
 
@@ -99,7 +100,7 @@ const after = s.camp?.jobs.find((j) => j.kind === "dry-meat");
 assert(after, "job should still exist after 16 hours");
 assert(after.hoursLeft === 0, `job should be ready, hoursLeft ${after.hoursLeft}`);
 s = applyAction(s, { type: "travel", to: "high-camp" });
-s = { ...s, activeEncounterId: null, skirmish: null };
+s = { ...s, activeEncounterId: null, skirmish: null, pendingRoll: null, dead: null };
 assert(s.locationId === "high-camp", "return to camp");
 const logText = s.log.map((l) => l.text).join(" ");
 assert(/jerky|rack|camp kept working|drying/i.test(logText) || after.hoursLeft === 0, "return text or ready job");
@@ -120,7 +121,7 @@ s.camp = emptyCamp("high-camp", {
 });
 s.inventory = { ...s.inventory, rations: 2, water: 1, firewood: 1, pelts: 0, powder: 0, extras: [] };
 s.locationId = "high-camp";
-s = { ...s, activeEncounterId: null, skirmish: null, dead: null };
+s = { ...s, activeEncounterId: null, skirmish: null, dead: null, pendingRoll: null };
 s = applyAction(s, { type: "strikeCamp" });
 assert(s.camp === null, "strike clears camp");
 assert(s.inventory.rations <= 6, "pack respects ration limit");
@@ -394,5 +395,97 @@ hunt = applyAction(hunt, { type: "finishDie" });
 assert(!hunt.pendingRoll, "hunt die should leave the table");
 assert(hunt.inventory.powder === 2, "powder spends when the shot lands");
 console.log("hunt die", { huntFace, powder: hunt.inventory.powder });
+
+let idleWait = packHonestyState();
+idleWait.hour = 10;
+idleWait.weather = "clear";
+idleWait.activeEncounterId = null;
+idleWait.skirmish = null;
+idleWait.pendingRoll = null;
+idleWait.presentCharacterId = null;
+const idleChoices = getChoices(idleWait);
+const waitChoice = idleChoices.find((c) => c.action.type === "wait");
+assert(waitChoice, "wait should always be in idle choices");
+assert(waitChoice.label === "Let time pass", `wait should be labeled Let time pass, got ${waitChoice.label}`);
+assert(waitChoice.tier === "hero", "wait is the hero idle verb");
+assert(idleChoices.some((c) => c.action.type === "restWatch"), "Watch a while stays as routine overflow");
+assert(waitHours(idleWait) === 4, `day wait is 4 hours, got ${waitHours(idleWait)}`);
+idleWait.hour = 22;
+assert(waitHours(idleWait) === 3, `night wait is 3 hours, got ${waitHours(idleWait)}`);
+idleWait.weather = "blizzard";
+assert(waitHours(idleWait) === 4, `blizzard wait is 4 hours, got ${waitHours(idleWait)}`);
+
+let waitClock = packHonestyState();
+waitClock.hour = 10;
+waitClock.weather = "clear";
+waitClock.season = "summer";
+const waitBefore = waitClock.daysSurvived * 24 + waitClock.hour;
+waitClock = applyAction(waitClock, { type: "wait" });
+const waitElapsed = waitClock.daysSurvived * 24 + waitClock.hour - waitBefore;
+assert(!waitClock.dead, "a fed wait should not kill");
+assert(waitElapsed === 3 || waitElapsed === 4, `wait should advance 3 or 4 hours, got ${waitElapsed}`);
+assert(waitClock.log.length >= 1 && waitClock.log[0]!.text.length > 0, "wait always writes flavor first");
+
+let uniqueHits = 0;
+for (let i = 0; i < 48; i++) {
+  let w: GameState = {
+    ...packHonestyState(),
+    rngSeed: (i + 1) * 104729,
+    hour: 10,
+    weather: "clear",
+    season: "summer",
+    presentCharacterId: null,
+    activeEncounterId: null,
+    seenEncounterIds: [],
+    skirmish: null,
+    pendingRoll: null,
+  };
+  w = applyAction(w, { type: "wait" });
+  if (w.activeEncounterId && !w.activeEncounterId.startsWith("chore-") && !w.activeEncounterId.startsWith("dlg-")) {
+    uniqueHits += 1;
+  }
+}
+console.log("wait unique stories", uniqueHits, "/48");
+assert(uniqueHits < 48, `wait should not start a unique story every time, got ${uniqueHits}/48`);
+assert(uniqueHits <= 28, `wait unique stories should be uncommon (~22%), got ${uniqueHits}/48`);
+
+const seasonFrom: GameState = { ...packHonestyState(), season: "winter", year: 0, locationId: "high-camp" };
+const seasonTo: GameState = { ...seasonFrom, season: "spring", year: 1, dayOfYear: 0 };
+const seasonSeq = seasonCinema(seasonFrom, seasonTo);
+assert(seasonSeq.beats.length >= 2, "season cinema has beats");
+assert(seasonSeq.card.length > 0, "season cinema has a card");
+assert(
+  seasonSeq.duration >= 8000 && seasonSeq.duration <= 20000,
+  `season cinema should run 8–20s, got ${seasonSeq.duration}ms`,
+);
+
+const deadState: GameState = {
+  ...packHonestyState(),
+  locationId: "wind-saddle",
+  dead: {
+    cause: "exposure",
+    detail: "The cold finished the work it started the first night you slept without a fire.",
+    daysSurvived: 9,
+    season: "winter",
+  },
+};
+const deathSeq = deathCinema(deadState);
+assert(deathSeq.beats.length >= 1, "death cinema has beats");
+assert(deathSeq.card.length > 0, "death cinema has a card");
+assert(/exposure/i.test(deathSeq.card), `death card should include cause, got ${deathSeq.card}`);
+
+const both: GameState = {
+  ...seasonTo,
+  dead: deadState.dead,
+};
+const preferred = cinemaAfterAction(seasonFrom, both);
+assert(preferred?.kind === "death", `death should win over season cinema, got ${preferred?.kind}`);
+
+console.log("wait / cinema", {
+  waitElapsed,
+  uniqueHits,
+  seasonMs: seasonSeq.duration,
+  deathCard: deathSeq.card.slice(0, 80),
+});
 
 console.log("ok");
