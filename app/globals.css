@@ -344,6 +344,187 @@
   }
 }
 
+@keyframes hc-ken-push {
+  from {
+    transform: scale(1) translate3d(0, 0, 0);
+  }
+  to {
+    transform: scale(1.12) translate3d(-2.4%, -1.4%, 0);
+  }
+}
+
+@keyframes hc-ken-pan {
+  from {
+    transform: scale(1.08) translate3d(3%, 0, 0);
+  }
+  to {
+    transform: scale(1.08) translate3d(-3.2%, -1.2%, 0);
+  }
+}
+
+@keyframes hc-ken-breathe {
+  0%,
+  100% {
+    transform: scale(1.02) translate3d(0, 0, 0);
+  }
+  50% {
+    transform: scale(1.07) translate3d(-1.2%, -0.6%, 0);
+  }
+}
+
+@keyframes hc-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes hc-cinema-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.hc-plate-breathe {
+  animation: hc-ken-breathe 32s ease-in-out infinite;
+}
+
+.hc-plate-fade-in {
+  animation: hc-fade-in 1.8s ease forwards;
+}
+
+.hc-plate-breathe.hc-plate-fade-in {
+  animation:
+    hc-fade-in 1.8s ease forwards,
+    hc-ken-breathe 32s ease-in-out infinite;
+}
+
+.hc-choices {
+  transition: opacity 0.9s ease;
+}
+
+.hc-choices.is-held {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.hc-cinema {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  background: #000;
+  cursor: pointer;
+}
+
+.hc-cinema-stage {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+}
+
+.hc-cinema-layer {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  opacity: 0;
+}
+
+.hc-cinema-layer.is-under {
+  opacity: 1;
+}
+
+.hc-cinema-layer.is-on {
+  animation: hc-cinema-fade 1.6s ease forwards;
+}
+
+.hc-cinema-layer.ken-push.is-on {
+  animation:
+    hc-cinema-fade 1.6s ease forwards,
+    hc-ken-push 18s ease-out forwards;
+}
+
+.hc-cinema-layer.ken-pan.is-on {
+  animation:
+    hc-cinema-fade 1.6s ease forwards,
+    hc-ken-pan 16s ease-in-out forwards;
+}
+
+.hc-cinema-layer.ken-breathe.is-on {
+  animation:
+    hc-cinema-fade 1.6s ease forwards,
+    hc-ken-breathe 22s ease-in-out infinite;
+}
+
+.hc-cinema-layer.ken-push.is-under {
+  animation: hc-ken-push 18s ease-out forwards;
+}
+
+.hc-cinema-layer.ken-pan.is-under {
+  animation: hc-ken-pan 16s ease-in-out forwards;
+}
+
+.hc-cinema-layer.ken-breathe.is-under {
+  animation: hc-ken-breathe 22s ease-in-out infinite;
+}
+
+.hc-cinema-veil {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(to top, rgba(0, 0, 0, 0.62) 0%, rgba(0, 0, 0, 0.18) 42%, rgba(0, 0, 0, 0.28) 100%);
+  pointer-events: none;
+}
+
+.hc-cinema-card {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 18%;
+  z-index: 2;
+  display: flex;
+  justify-content: center;
+  padding: 0 1.5rem;
+  animation: hc-fade-in 1.2s ease;
+  pointer-events: none;
+}
+
+.hc-cinema-card p {
+  max-width: 34rem;
+  font-family: var(--font-heading), ui-serif, Georgia, serif;
+  font-size: 1.35rem;
+  line-height: 1.45;
+  color: #f5f0e6;
+  text-align: center;
+  text-shadow: 0 1px 12px rgba(0, 0, 0, 0.8);
+}
+
+.hc-cinema-skip {
+  position: absolute;
+  top: 1rem;
+  right: 1rem;
+  z-index: 3;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  background: rgba(0, 0, 0, 0.45);
+  color: rgba(253, 230, 178, 0.85);
+  font-size: 11px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  padding: 0.4rem 0.75rem;
+  border-radius: 999px;
+  backdrop-filter: blur(6px);
+}
+
+.hc-cinema-skip:hover {
+  border-color: rgba(253, 230, 178, 0.55);
+  color: #fffbeb;
+}
+
 @keyframes fate-tumble {
   0% {
     transform: rotateX(-18deg) rotateY(16deg) scale(1);

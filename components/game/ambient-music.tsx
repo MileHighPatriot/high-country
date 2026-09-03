@@ -4,10 +4,13 @@ import { useEffect, useRef, useState } from "react";
 import { withBase } from "@/lib/paths";
 
 const MUTE_KEY = "hc-music-muted";
+const BASE_VOLUME = 0.34;
 
 export function AmbientMusic() {
   const audioRef = useRef<HTMLAudioElement>(null);
   const [muted, setMuted] = useState(false);
+  const targetRef = useRef(BASE_VOLUME);
+  const rafRef = useRef<number>(0);
 
   useEffect(() => {
     if (localStorage.getItem(MUTE_KEY) === "1") setMuted(true);
@@ -21,16 +24,44 @@ export function AmbientMusic() {
   useEffect(() => {
     const el = audioRef.current;
     if (!el) return;
-    el.volume = 0.34;
+    el.volume = BASE_VOLUME;
     const tryPlay = () => {
       void el.play().catch(() => {});
     };
     tryPlay();
     window.addEventListener("pointerdown", tryPlay);
     window.addEventListener("keydown", tryPlay);
+
+    const rampTo = (target: number) => {
+      targetRef.current = target;
+      window.cancelAnimationFrame(rafRef.current);
+      const step = () => {
+        const node = audioRef.current;
+        if (!node) return;
+        const next = node.volume + (targetRef.current - node.volume) * 0.08;
+        if (Math.abs(next - targetRef.current) < 0.008) {
+          node.volume = targetRef.current;
+          return;
+        }
+        node.volume = next;
+        rafRef.current = window.requestAnimationFrame(step);
+      };
+      rafRef.current = window.requestAnimationFrame(step);
+    };
+
+    const onCinema = (event: Event) => {
+      const mode = (event as CustomEvent<{ mode?: string }>).detail?.mode;
+      if (mode === "swell") rampTo(0.52);
+      else if (mode === "dip") rampTo(0.1);
+      else rampTo(BASE_VOLUME);
+    };
+    window.addEventListener("hc-cinema-music", onCinema);
+
     return () => {
       window.removeEventListener("pointerdown", tryPlay);
       window.removeEventListener("keydown", tryPlay);
+      window.removeEventListener("hc-cinema-music", onCinema);
+      window.cancelAnimationFrame(rafRef.current);
     };
   }, []);
 

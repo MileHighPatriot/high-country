@@ -236,6 +236,8 @@ export interface Choice {
   disabled?: boolean;
   hint?: string;
   action: GameAction;
+  /** Hero is the main verb row. Routine folds into Tend camp. Travel stays on the trail row. */
+  tier?: "hero" | "routine" | "travel";
 }
 
 export interface Outcome {
