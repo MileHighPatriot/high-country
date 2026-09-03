@@ -1,5 +1,6 @@
 import {
   addCampExtra,
+  addToPack,
   atOwnCamp,
   buildHours,
   cacheCap,
@@ -175,6 +176,10 @@ function applyMeterDelta(meters: Meters, delta: Partial<Meters>, invertDrain = f
   });
 }
 
+function withLeftoverNote(text: string, note: string | null | undefined) {
+  return note ? `${text} ${note}` : text;
+}
+
 function decayHealth(meters: Meters) {
   let bite = 0;
   // Fastest killers win the name if several meters are already gone.
@@ -309,11 +314,19 @@ function applyOutcome(state: GameState, outcome: Outcome): GameState {
     });
     applyMeterDelta(next.meters, scaled);
   }
+  const leftoverNotes: string[] = [];
   if (outcome.inventory) {
     for (const [k, v] of Object.entries(outcome.inventory)) {
-      if (v == null) continue;
-      const key = k as keyof typeof outcome.inventory;
-      next.inventory[key] = Math.max(0, (next.inventory[key] as number) + v);
+      if (v == null || v >= 0) continue;
+      const key = k as CampStowItem;
+      next.inventory[key] = Math.max(0, next.inventory[key] + v);
+    }
+    for (const [k, v] of Object.entries(outcome.inventory)) {
+      if (v == null || v <= 0) continue;
+      const gained = addToPack(next, k as CampStowItem, v);
+      next.inventory = gained.state.inventory;
+      next.camp = gained.state.camp;
+      if (gained.note) leftoverNotes.push(gained.note);
     }
   }
   if (outcome.extraAdd && !next.inventory.extras.includes(outcome.extraAdd)) {
@@ -363,7 +376,10 @@ function applyOutcome(state: GameState, outcome: Outcome): GameState {
     next.inventory.extras = next.inventory.extras.filter((e) => e !== "snow-hole");
     if (outcome.presentCharacter === undefined) next.presentCharacterId = null;
   }
-  const beat = outcome.scene ? `${outcome.text} ${outcome.scene}` : outcome.text;
+  const beat = withLeftoverNote(
+    outcome.scene ? `${outcome.text} ${outcome.scene}` : outcome.text,
+    leftoverNotes.length ? leftoverNotes.join(" ") : null,
+  );
   next = appendLog(next, beat);
   if (outcome.startSkirmish && !next.dead) {
     next.skirmish = {
@@ -1488,18 +1504,14 @@ function collectCampJob(state: GameState, id: string): GameState {
   next.camp!.jobs = next.camp!.jobs.filter((j) => j.id !== id);
   let text = "";
   if (job.kind === "dry-meat") {
-    const room = packRoom(next.inventory, "rations");
-    const toPack = Math.min(2, room);
-    const toCache = 2 - toPack;
-    next.inventory.rations += toPack;
-    if (toCache > 0) {
-      const cap = cacheCap(next.camp!, "rations");
-      const fit = Math.min(toCache, Math.max(0, cap - next.camp!.cache.rations));
-      next.camp!.cache.rations += fit;
-    }
+    const gained = addToPack(next, "rations", 2);
+    next = gained.state;
     if (!next.camp!.cache.extras.includes("jerky")) next.camp!.cache.extras.push("jerky");
     if (!next.inventory.extras.includes("jerky")) next.inventory.extras.push("jerky");
-    text = "You take the jerky off the rack. Stiff as a legal document. It will keep longer than wet meat.";
+    text = withLeftoverNote(
+      "You take the jerky off the rack. Stiff as a legal document. It will keep longer than wet meat.",
+      gained.note,
+    );
   } else if (job.kind === "bank-coals") {
     next.camp = addCampExtra(next.camp!, "banked-coals");
     if (!next.inventory.extras.includes("banked-coals")) next.inventory.extras.push("banked-coals");
@@ -1509,10 +1521,12 @@ function collectCampJob(state: GameState, id: string): GameState {
     next.rngSeed = nextSeed(next.rngSeed);
     const meat = rng() < 0.55 ? 1 : 0;
     if (meat) {
-      const room = packRoom(next.inventory, "rations");
-      if (room > 0) next.inventory.rations += 1;
-      else next.camp!.cache.rations += 1;
-      text = "The snare has done the ugly arithmetic. A hare, stiff, honest. You reset nothing; the job is collected.";
+      const gained = addToPack(next, "rations", 1);
+      next = gained.state;
+      text = withLeftoverNote(
+        "The snare has done the ugly arithmetic. A hare, stiff, honest. You reset nothing; the job is collected.",
+        gained.note,
+      );
     } else {
       text = "Empty loops. A feather. The suggestion of a joke. You walk back to the ring.";
     }
@@ -1540,13 +1554,13 @@ export function applyAction(state: GameState, action: GameAction): GameState {
 
   switch (action.type) {
     case "eat": {
-      if (state.inventory.rations <= 0) return appendLog(state, "The bag is empty. Your stomach is not.");
+      const spent = spendFromPackOrCache(state, "rations", 1);
+      if (!spent) return appendLog(state, "The bag is empty. Your stomach is not.");
       let next: GameState = {
-        ...state,
-        inventory: { ...state.inventory, rations: state.inventory.rations - 1 },
-        meters: { ...state.meters, hunger: clamp(state.meters.hunger + 22) },
+        ...spent,
+        meters: { ...spent.meters, hunger: clamp(spent.meters.hunger + 22) },
       };
-      next = appendLog(next, eatCopy(state));
+      next = appendLog(advanceTime(next, 1), eatCopy(state));
       if (timeBand(state.hour) === "dusk" && state.campfire) {
         const rng = mulberry32(next.rngSeed);
         next = { ...next, rngSeed: nextSeed(next.rngSeed) };
@@ -1563,13 +1577,13 @@ export function applyAction(state: GameState, action: GameAction): GameState {
       return maybeRipple(next, "eat", 0.28);
     }
     case "drink": {
-      if (state.inventory.water <= 0) return appendLog(state, "The canteen talks like a drum.");
+      const spent = spendFromPackOrCache(state, "water", 1);
+      if (!spent) return appendLog(state, "The canteen talks like a drum.");
       const next = {
-        ...state,
-        inventory: { ...state.inventory, water: state.inventory.water - 1 },
-        meters: { ...state.meters, thirst: clamp(state.meters.thirst + 26) },
+        ...spent,
+        meters: { ...spent.meters, thirst: clamp(spent.meters.thirst + 26) },
       };
-      return maybeRipple(appendLog(next, drinkCopy(state)), "drink", 0.22);
+      return maybeRipple(appendLog(advanceTime(next, 1), drinkCopy(state)), "drink", 0.22);
     }
     case "sleep":
       return sleep(state);
@@ -1661,15 +1675,19 @@ export function applyAction(state: GameState, action: GameAction): GameState {
           next = appendLog(advanceTime(next, 2), "The ice opens a mouth. You get out. Not all of the heat comes with you.");
           return next;
         }
-        next.inventory = { ...next.inventory, water: next.inventory.water + 2 };
-        return appendLog(advanceTime(next, 2), "You take water from ice like a thief. Two canteens.");
+        const gained = addToPack(next, "water", 2);
+        next = gained.state;
+        return appendLog(
+          advanceTime(next, 2),
+          withLeftoverNote("You take water from ice like a thief. Two canteens.", gained.note),
+        );
       }
-      const next = {
-        ...state,
-        inventory: { ...state.inventory, water: state.inventory.water + 2 },
-      };
+      const gained = addToPack(state, "water", 2);
       return maybeRipple(
-        appendLog(advanceTime(next, 1), "You fill the canteens. The water tastes of granite and luck."),
+        appendLog(
+          advanceTime(gained.state, 1),
+          withLeftoverNote("You fill the canteens. The water tastes of granite and luck.", gained.note),
+        ),
         "drink",
         0.18,
       );
@@ -1685,19 +1703,23 @@ export function applyAction(state: GameState, action: GameAction): GameState {
           rolled.roll,
         );
         const gain = rolled.roll.success ? 2 : 1;
-        next.inventory = { ...next.inventory, firewood: next.inventory.firewood + gain };
+        const gained = addToPack(next, "firewood", gain);
+        next = gained.state;
         return appendLog(
           advanceTime(next, 2),
-          rolled.roll.success
-            ? "You break frozen limbs until your shoulders argue. Two armfuls, paid in skin."
-            : "Snow up to the elbow. One armful and a hatred of January.",
+          withLeftoverNote(
+            rolled.roll.success
+              ? "You break frozen limbs until your shoulders argue. Two armfuls, paid in skin."
+              : "Snow up to the elbow. One armful and a hatred of January.",
+            gained.note,
+          ),
         );
       }
-      const next = {
-        ...state,
-        inventory: { ...state.inventory, firewood: state.inventory.firewood + 2 },
-      };
-      return appendLog(advanceTime(next, 2), "You break dead limbs until your shoulders argue. Two armfuls.");
+      const gained = addToPack(state, "firewood", 2);
+      return appendLog(
+        advanceTime(gained.state, 2),
+        withLeftoverNote("You break dead limbs until your shoulders argue. Two armfuls.", gained.note),
+      );
     }
     case "wait": {
       const hours = state.weather === "blizzard" ? 3 : timeBand(state.hour) === "night" ? 2 : 3;
@@ -1834,8 +1856,13 @@ export function applyAction(state: GameState, action: GameAction): GameState {
       const kind: "meat" | "empty" | "cut" = r < 0.38 ? "meat" : r < 0.52 ? "cut" : "empty";
       next.inventory = { ...next.inventory };
       next.meters = { ...next.meters, energy: clamp(next.meters.energy - 3) };
-      if (kind === "meat") next.inventory.rations = next.inventory.rations + 1;
-      next = appendLog(advanceTime(next, 2), snaresCopy(state, kind));
+      let snareNote: string | null = null;
+      if (kind === "meat") {
+        const gained = addToPack(next, "rations", 1);
+        next = gained.state;
+        snareNote = gained.note;
+      }
+      next = appendLog(advanceTime(next, 2), withLeftoverNote(snaresCopy(state, kind), snareNote));
       return maybeRipple(next, "snares", kind === "cut" ? 0.7 : 0.28);
     }
     case "cache": {
