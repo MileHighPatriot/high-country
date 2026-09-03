@@ -343,4 +343,33 @@ console.log("kits", {
   coat: wool.inventory.coat,
 });
 
+let die = forceHighCamp(createGame("Die Test", "coat"));
+die = {
+  ...die,
+  season: "summer",
+  weather: "storm",
+  locationId: "wind-saddle",
+  knownLocations: Array.from(new Set(["wind-saddle", ...die.knownLocations])),
+  activeEncounterId: "sum-storm-saddle",
+  pendingRoll: null,
+  skirmish: null,
+  dead: null,
+};
+die = applyAction(die, { type: "encounterChoice", optionId: "walk" });
+assert(die.pendingRoll?.optionId === "walk", "a DC 14 check should put the die on the table");
+assert(die.activeEncounterId === "sum-storm-saddle", "the moment stays open until the die lands");
+assert(die.pendingRoll?.d20 == null, "the die has not been cast yet");
+const blocked = applyAction(die, { type: "eat" });
+assert(blocked.pendingRoll?.optionId === "walk", "other actions do not steal the die");
+die = applyAction(die, { type: "castDie" });
+assert(typeof die.pendingRoll?.d20 === "number", "castDie writes a face");
+assert((die.pendingRoll?.d20 ?? 0) >= 1 && (die.pendingRoll?.d20 ?? 0) <= 20, "d20 is in range");
+const face = die.pendingRoll!.d20;
+die = applyAction(die, { type: "castDie" });
+assert(die.pendingRoll?.d20 === face, "a second cast does not reroll");
+die = applyAction(die, { type: "finishDie" });
+assert(!die.pendingRoll, "finishDie clears the table");
+assert(die.activeEncounterId == null, "the encounter closes after the roll");
+console.log("die", { face, log: die.log.map((l) => l.text).join(" | ").slice(0, 160) });
+
 console.log("ok");

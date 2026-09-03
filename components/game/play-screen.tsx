@@ -18,6 +18,7 @@ import { campHotspots } from "@/lib/game/camp";
 import { CHARACTER_BY_ID } from "@/lib/game/content/characters";
 import { LOCATION_BY_ID } from "@/lib/game/content/locations";
 import { loadGame, saveGame } from "@/lib/game/save";
+import { FateDie } from "@/components/game/fate-die";
 import type { Choice, GameState, Kit } from "@/lib/game/types";
 import { timeBand } from "@/lib/game/types";
 import { withBase } from "@/lib/paths";
@@ -248,20 +249,31 @@ export function PlayScreen() {
               </div>
             </div>
           )}
-          <div className="flex flex-wrap gap-2">
-            {rest.map((c) => (
-              <Button
-                key={c.id}
-                size="lg"
-                variant={c.action.type === "skirmish" && c.id === "flee" ? "secondary" : "default"}
-                disabled={c.disabled}
-                title={c.hint}
-                onClick={() => act(c)}
-              >
-                {c.label}
-              </Button>
-            ))}
-          </div>
+          {state.pendingRoll ? (
+            <FateDie
+              pending={state.pendingRoll}
+              retreats={rest}
+              scene={state.log[state.log.length - 1]?.text}
+              onCast={() => setState((s) => (s ? applyAction(s, { type: "castDie" }) : s))}
+              onSettled={() => setState((s) => (s ? applyAction(s, { type: "finishDie" }) : s))}
+              onRetreat={act}
+            />
+          ) : (
+            <div className="flex flex-wrap gap-2">
+              {rest.map((c) => (
+                <Button
+                  key={c.id}
+                  size="lg"
+                  variant={c.action.type === "skirmish" && c.id === "flee" ? "secondary" : "default"}
+                  disabled={c.disabled}
+                  title={c.hint}
+                  onClick={() => act(c)}
+                >
+                  {c.label}
+                </Button>
+              ))}
+            </div>
+          )}
           {travel.length > 0 && (
             <div className="flex flex-wrap gap-2">
               {travel.map((c) => (
