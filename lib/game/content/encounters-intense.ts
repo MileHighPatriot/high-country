@@ -3,6 +3,75 @@ import type { EncounterDef } from "@/lib/game/types";
 /** High-stakes beats. The bone d20 comes out when these begin. */
 export const INTENSE_ENCOUNTERS: EncounterDef[] = [
   {
+    id: "int-wrong-step",
+    intense: true,
+    locations: "any",
+    triggers: ["search", "scout", "wait"],
+    weight: 7,
+    text: "The ground under the next step is not ground. A hollow, a crust, a lie. You are already committed. The mountain is waiting to see if you are.",
+    choices: [
+      {
+        id: "commit",
+        label: "Take the step and stay upright",
+        check: { trait: "grit", dc: 13 },
+        success: {
+          text: "You ride the give and come out on honest dirt. Something under the crust settles with a sound you will not forget.",
+          hours: 1,
+          meters: { energy: -8, health: -2 },
+        },
+        fail: {
+          text: "The crust takes your shin to the knee. You crawl out with a mouth full of grit and a new limp.",
+          hours: 2,
+          meters: { health: -10, energy: -12 },
+        },
+      },
+      {
+        id: "back",
+        label: "Throw your weight back",
+        outcome: {
+          text: "Pride is cheaper than a broken tibia. You sit down hard and pick another line.",
+          hours: 1,
+          meters: { energy: -4 },
+        },
+      },
+    ],
+  },
+  {
+    id: "int-camp-cat",
+    intense: true,
+    locations: ["high-camp", "timberline", "lightning-pine"],
+    triggers: ["search", "wait", "arrive", "fire", "hunt"],
+    timeBands: ["dusk", "night", "dawn"],
+    weight: 8,
+    text: "Something is on the woodpile that is not a man and not a coyote. A cat the color of dead lodgepole. It has been watching the lean-to the way a man watches a door. The distance is already wrong.",
+    choices: [
+      {
+        id: "hold",
+        label: "Hold still and own the ground",
+        check: { trait: "grit", dc: 14 },
+        success: {
+          text: "You become the larger animal by an act of fraud. It looks through you, then around you, then is gone. The pile is just wood again.",
+          hours: 1,
+          meters: { energy: -8 },
+        },
+        fail: {
+          text: "It comes off the pile high. Fur, heat, a red line from collar to ribs. You keep the rifle because you never got to use it.",
+          hours: 1,
+          meters: { health: -16, energy: -12 },
+        },
+      },
+      {
+        id: "off",
+        label: "Give it the pile and back into the light",
+        outcome: {
+          text: "You let it have the bench. It takes a scrap if you left one and leaves a print the size of a skillet.",
+          hours: 1,
+          inventory: { rations: -1 },
+        },
+      },
+    ],
+  },
+  {
     id: "int-chute-loaded",
     intense: true,
     season: ["winter", "spring"],

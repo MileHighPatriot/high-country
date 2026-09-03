@@ -372,4 +372,27 @@ assert(!die.pendingRoll, "finishDie clears the table");
 assert(die.activeEncounterId == null, "the encounter closes after the roll");
 console.log("die", { face, log: die.log.map((l) => l.text).join(" | ").slice(0, 160) });
 
+let hunt = forceHighCamp(createGame("Hunt Die", "powder"));
+hunt = {
+  ...hunt,
+  locationId: "timberline",
+  season: "fall",
+  weather: "clear",
+  pendingRoll: null,
+  activeEncounterId: null,
+  skirmish: null,
+  dead: null,
+  inventory: { ...hunt.inventory, rifle: true, powder: 3 },
+};
+hunt = applyAction(hunt, { type: "hunt" });
+assert(hunt.pendingRoll?.resume?.type === "hunt", "hunt should put the die on the table");
+assert(hunt.inventory.powder === 3, "powder waits until the throw");
+hunt = applyAction(hunt, { type: "castDie" });
+assert(typeof hunt.pendingRoll?.d20 === "number", "hunt die should have a face");
+const huntFace = hunt.pendingRoll!.d20;
+hunt = applyAction(hunt, { type: "finishDie" });
+assert(!hunt.pendingRoll, "hunt die should leave the table");
+assert(hunt.inventory.powder === 2, "powder spends when the shot lands");
+console.log("hunt die", { huntFace, powder: hunt.inventory.powder });
+
 console.log("ok");
