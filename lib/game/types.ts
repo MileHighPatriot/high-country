@@ -121,6 +121,8 @@ export interface PendingRoll {
   d20?: number;
   success?: boolean;
   total?: number;
+  /** Hunt, fish, scout, and the hard chores resume here after the throw. */
+  resume?: GameAction;
 }
 
 export interface LogEntry {
@@ -225,6 +227,7 @@ export type GameAction =
   | { type: "encounterChoice"; optionId: string }
   | { type: "castDie" }
   | { type: "finishDie" }
+  | { type: "cancelDie" }
   | { type: "skirmish"; move: SkirmishMove };
 
 export interface Choice {

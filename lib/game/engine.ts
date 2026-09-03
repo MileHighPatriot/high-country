@@ -236,7 +236,7 @@ function rollPenalty(state: GameState): number {
 export function isDramaticCheck(enc: EncounterDef, option: EncounterChoice): boolean {
   if (!option.check) return false;
   if (enc.intense) return true;
-  if (option.check.dc >= 14) return true;
+  if (option.check.dc >= 12) return true;
   return Boolean(
     option.success?.death ||
       option.fail?.death ||
@@ -255,6 +255,36 @@ function makePendingRoll(state: GameState, enc: EncounterDef, option: EncounterC
     dc: option.check.dc,
     modifier: state.traits[option.check.trait],
     penalty: rollPenalty(state),
+  };
+}
+
+function armActionDie(
+  state: GameState,
+  label: string,
+  trait: Trait,
+  dc: number,
+  resume: GameAction,
+): { kind: "armed"; state: GameState } | { kind: "rolled"; state: GameState; roll: RollResult } {
+  const pending = state.pendingRoll;
+  if (pending?.d20 != null && pending.resume?.type === resume.type) {
+    const roll = resultFromPending(pending);
+    if (roll) return { kind: "rolled", state: { ...state, pendingRoll: null }, roll };
+  }
+  return {
+    kind: "armed",
+    state: {
+      ...state,
+      pendingRoll: {
+        optionId: resume.type,
+        encounterId: "",
+        label,
+        trait,
+        dc,
+        modifier: state.traits[trait],
+        penalty: rollPenalty(state),
+        resume,
+      },
+    },
   };
 }
 
@@ -298,6 +328,7 @@ function castPendingDie(state: GameState): GameState {
 function finishPendingDie(state: GameState): GameState {
   const pending = state.pendingRoll;
   if (!pending || pending.d20 == null) return state;
+  if (pending.resume) return applyAction(state, pending.resume);
   const enc = getActiveEncounter(state) ?? allEncounters().find((e) => e.id === pending.encounterId);
   const option = enc?.choices.find((c) => c.id === pending.optionId);
   const roll = resultFromPending(pending);
@@ -639,6 +670,7 @@ function pickEncounter(state: GameState, kind: EncounterTrigger): EncounterDef {
     let w = e.weight ?? (e.locations === "any" || !e.locations ? 1 : 2);
     if (e.triggers?.includes(kind)) w += 3;
     if (e.timeBands?.includes(band)) w += 1;
+    if (e.intense) w += 8;
     return w;
   });
   const total = weights.reduce((a, b) => a + b, 0);
@@ -1644,20 +1676,23 @@ function collectCampJob(state: GameState, id: string): GameState {
 export function applyAction(state: GameState, action: GameAction): GameState {
   if (state.dead) return state;
   if (state.skirmish && action.type !== "skirmish") return state;
-  if (
-    state.pendingRoll &&
-    action.type !== "castDie" &&
-    action.type !== "finishDie" &&
-    action.type !== "encounterChoice"
-  ) {
-    return state;
+  if (state.pendingRoll) {
+    const resumeType = state.pendingRoll.resume?.type;
+    const allowed =
+      action.type === "castDie" ||
+      action.type === "finishDie" ||
+      action.type === "cancelDie" ||
+      action.type === "encounterChoice" ||
+      (state.pendingRoll.d20 != null && resumeType != null && action.type === resumeType);
+    if (!allowed) return state;
   }
   if (
     state.activeEncounterId &&
     action.type !== "encounterChoice" &&
     action.type !== "skirmish" &&
     action.type !== "castDie" &&
-    action.type !== "finishDie"
+    action.type !== "finishDie" &&
+    action.type !== "cancelDie"
   ) {
     if (getActiveEncounter(state)) return state;
     state = { ...state, activeEncounterId: null };
@@ -1771,13 +1806,11 @@ export function applyAction(state: GameState, action: GameAction): GameState {
       }
       const winterIce = state.season === "winter" || state.weather === "snow" || state.weather === "blizzard";
       if (winterIce) {
-        const rolled = rollCheck(state, "hands", 12);
-        let next = appendLog(
-          rolled.state,
-          `Ice — d20 ${rolled.roll.d20} + hands ${rolled.roll.modifier} − ${rolled.roll.penalty} = ${rolled.roll.total} vs 12.`,
-          rolled.roll,
-        );
-        if (!rolled.roll.success) {
+        const armed = armActionDie(state, "Chop a drinking hole", "hands", 12, { type: "gatherWater" });
+        if (armed.kind === "armed") return armed.state;
+        const roll = armed.roll;
+        let next = appendLog(armed.state, rollLine(roll, "Ice"), roll);
+        if (!roll.success) {
           next.meters = { ...next.meters, health: clamp(next.meters.health - 4), warmth: clamp(next.meters.warmth - 7) };
           next.inventory = {
             ...next.inventory,
@@ -1807,19 +1840,17 @@ export function applyAction(state: GameState, action: GameAction): GameState {
       const loc = LOCATION_BY_ID[state.locationId];
       if (!loc?.tags.includes("wood")) return appendLog(state, "This ground does not owe you timber.");
       if (state.season === "winter" || state.weather === "blizzard" || timeBand(state.hour) === "night") {
-        const rolled = rollCheck(state, "hands", 12);
-        let next = appendLog(
-          rolled.state,
-          `Deadwood — d20 ${rolled.roll.d20} + hands ${rolled.roll.modifier} − ${rolled.roll.penalty} = ${rolled.roll.total} vs 12.`,
-          rolled.roll,
-        );
-        const gain = rolled.roll.success ? 2 : 1;
+        const armed = armActionDie(state, "Break deadwood in the dark", "hands", 12, { type: "gatherWood" });
+        if (armed.kind === "armed") return armed.state;
+        const roll = armed.roll;
+        let next = appendLog(armed.state, rollLine(roll, "Deadwood"), roll);
+        const gain = roll.success ? 2 : 1;
         const gained = addToPack(next, "firewood", gain);
         next = gained.state;
         return appendLog(
           advanceTime(next, 2),
           withLeftoverNote(
-            rolled.roll.success
+            roll.success
               ? "You break frozen limbs until your shoulders argue. Two armfuls, paid in skin."
               : "Snow up to the elbow. One armful and a hatred of January.",
             gained.note,
@@ -1868,26 +1899,30 @@ export function applyAction(state: GameState, action: GameAction): GameState {
       if (!loc?.tags.includes("game")) return appendLog(state, "This ground does not owe you a hunt.");
       if (state.weather === "blizzard") return appendLog(state, "In this white you would hunt only your own death.");
       const usedRifle = Boolean(state.inventory.rifle && state.inventory.powder > 0);
-      let next: GameState = usedRifle
-        ? { ...state, inventory: { ...state.inventory, powder: state.inventory.powder - 1 } }
-        : state;
       const dc = usedRifle ? (timeBand(state.hour) === "dusk" ? 13 : 12) : 13;
-      const rolled = rollCheck(next, usedRifle ? "eye" : "hands", dc);
-      next = appendLog(
-        rolled.state,
-        `${usedRifle ? "Hunt" : "Still-hunt"} — d20 ${rolled.roll.d20} + ${rolled.roll.trait} ${rolled.roll.modifier} − ${rolled.roll.penalty} = ${rolled.roll.total} vs ${dc}.`,
-        rolled.roll,
+      const armed = armActionDie(
+        state,
+        usedRifle ? "Take the shot" : "Still-hunt with the knife",
+        usedRifle ? "eye" : "hands",
+        dc,
+        { type: "hunt" },
       );
-      const wound = !rolled.roll.success && rolled.roll.d20 <= 3;
+      if (armed.kind === "armed") return armed.state;
+      const roll = armed.roll;
+      let next: GameState = usedRifle
+        ? { ...armed.state, inventory: { ...armed.state.inventory, powder: armed.state.inventory.powder - 1 } }
+        : armed.state;
+      next = appendLog(next, rollLine(roll, usedRifle ? "Hunt" : "Still-hunt"), roll);
+      const wound = !roll.success && roll.d20 <= 3;
       next = applyOutcome(next, {
         text:
-          huntCopy(state, rolled.roll.success, usedRifle) +
+          huntCopy(state, roll.success, usedRifle) +
           (wound ? " A branch, a fall, a red line on the shin." : ""),
         hours: 2,
-        meters: rolled.roll.success
+        meters: roll.success
           ? { energy: -12 }
           : { energy: -12, health: wound ? -8 : 0 },
-        inventory: rolled.roll.success ? { rations: usedRifle ? 2 : 1, pelts: rolled.roll.d20 >= 18 ? 1 : 0 } : undefined,
+        inventory: roll.success ? { rations: usedRifle ? 2 : 1, pelts: roll.d20 >= 18 ? 1 : 0 } : undefined,
       });
       return maybeRipple(next, "hunt", 0.36);
     }
@@ -1896,19 +1931,19 @@ export function applyAction(state: GameState, action: GameAction): GameState {
       if (!allowed.has(state.locationId)) return appendLog(state, "No water here that owes you a fish.");
       if (state.weather === "blizzard") return appendLog(state, "The blizzard has the bank.");
       const ice = state.season === "winter" || state.weather === "snow";
-      const rolled = rollCheck(state, "hands", ice ? 13 : 11);
-      let next = appendLog(
-        rolled.state,
-        `Fish — d20 ${rolled.roll.d20} + hands ${rolled.roll.modifier} − ${rolled.roll.penalty} = ${rolled.roll.total} vs ${ice ? 13 : 11}.`,
-        rolled.roll,
-      );
-      const dunk = ice && !rolled.roll.success && rolled.roll.d20 <= 4;
+      const armed = armActionDie(state, ice ? "Cut a hole and fish" : "Fish the bank", "hands", ice ? 13 : 11, {
+        type: "fish",
+      });
+      if (armed.kind === "armed") return armed.state;
+      const roll = armed.roll;
+      let next = appendLog(armed.state, rollLine(roll, "Fish"), roll);
+      const dunk = ice && !roll.success && roll.d20 <= 4;
       next = applyOutcome(next, {
         text: dunk
           ? `${fishCopy(state, false, true)} The ice opens a mouth.`
-          : fishCopy(state, rolled.roll.success, ice),
+          : fishCopy(state, roll.success, ice),
         hours: 2,
-        inventory: rolled.roll.success && !dunk ? { rations: 1 } : undefined,
+        inventory: roll.success && !dunk ? { rations: 1 } : undefined,
         meters: dunk
           ? { health: -8, warmth: -14, energy: -8 }
           : { energy: -8, warmth: ice ? -10 : -2 },
@@ -1917,28 +1952,28 @@ export function applyAction(state: GameState, action: GameAction): GameState {
     }
     case "scout": {
       const night = timeBand(state.hour) === "night";
-      const rolled = rollCheck(state, "savvy", night ? 13 : 12);
-      let next = appendLog(
-        rolled.state,
-        `${night ? "Watch" : "Scout"} — d20 ${rolled.roll.d20} + savvy ${rolled.roll.modifier} − ${rolled.roll.penalty} = ${rolled.roll.total} vs ${night ? 13 : 12}.`,
-        rolled.roll,
-      );
+      const armed = armActionDie(state, night ? "Hold the watch" : "Scout the next bench", "savvy", night ? 13 : 12, {
+        type: "scout",
+      });
+      if (armed.kind === "armed") return armed.state;
+      const roll = armed.roll;
+      let next = appendLog(armed.state, rollLine(roll, night ? "Watch" : "Scout"), roll);
       const loc = LOCATION_BY_ID[state.locationId];
       const unknown = loc?.connections.filter((c) => !state.knownLocations.includes(c.to)) ?? [];
       const rng = mulberry32(next.rngSeed);
       next = { ...next, rngSeed: nextSeed(next.rngSeed) };
-      const unlock = rolled.roll.success && unknown.length ? unknown[Math.floor(rng() * unknown.length)]!.to : undefined;
+      const unlock = roll.success && unknown.length ? unknown[Math.floor(rng() * unknown.length)]!.to : undefined;
       let present: CharacterId | undefined;
-      if (rolled.roll.success && rng() < 0.28) {
+      if (roll.success && rng() < 0.28) {
         const people = presentPeople(next);
         if (people.length) present = people[Math.floor(rng() * people.length)]!.id;
       }
       let weather: Weather | undefined;
-      if (rolled.roll.success && (state.locationId === "wind-saddle" || state.locationId === "south-pass") && rng() < 0.3) {
+      if (roll.success && (state.locationId === "wind-saddle" || state.locationId === "south-pass") && rng() < 0.3) {
         weather = state.season === "winter" ? "blizzard" : state.season === "summer" ? "storm" : "wind";
       }
       next = applyOutcome(next, {
-        text: scoutCopy(state, rolled.roll.success),
+        text: scoutCopy(state, roll.success),
         hours: night ? 1 : 2,
         meters: { energy: -8 },
         unlockLocation: unlock,
@@ -2028,6 +2063,8 @@ export function applyAction(state: GameState, action: GameAction): GameState {
       return castPendingDie(state);
     case "finishDie":
       return finishPendingDie(state);
+    case "cancelDie":
+      return { ...state, pendingRoll: null };
     case "skirmish":
       return resolveSkirmish(state, action.move);
     case "pitchCamp":
@@ -2062,19 +2099,29 @@ export function getChoices(state: GameState): Choice[] {
   }
   if (state.pendingRoll) {
     const enc = getActiveEncounter(state);
-    if (!enc) return [];
-    return enc.choices
-      .filter((c) => !c.check)
-      .map((c) => {
-        const afford = choiceAffordable(state, c);
-        return {
-          id: c.id,
-          label: c.label,
-          disabled: !afford,
-          hint: "Leave the die on the table",
-          action: { type: "encounterChoice" as const, optionId: c.id },
-        };
+    const retreats =
+      enc?.choices
+        .filter((c) => !c.check)
+        .map((c) => {
+          const afford = choiceAffordable(state, c);
+          return {
+            id: c.id,
+            label: c.label,
+            disabled: !afford,
+            hint: "Leave the die on the table",
+            action: { type: "encounterChoice" as const, optionId: c.id },
+          };
+        }) ?? [];
+    if (state.pendingRoll.resume) {
+      retreats.push({
+        id: "cancel-die",
+        label: "Let it go",
+        disabled: false,
+        hint: "Leave the die on the table",
+        action: { type: "cancelDie" as const },
       });
+    }
+    return retreats;
   }
   if (state.activeEncounterId) {
     const enc = getActiveEncounter(state);
