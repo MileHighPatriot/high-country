@@ -341,11 +341,25 @@ export function PlayScreen() {
             />
           ) : (
             <div className={cn("hc-choices space-y-3", choiceHold && "is-held")}>
+              {idle &&
+                showHero
+                  .filter((c) => c.action.type === "wait")
+                  .map((c) => (
+                    <Button
+                      key={c.id}
+                      disabled={c.disabled}
+                      title={c.hint}
+                      onClick={() => act(c)}
+                      className="h-12 min-w-[16rem] px-6 text-base tracking-[0.14em] sm:h-14 sm:min-w-[20rem] sm:text-lg"
+                    >
+                      {c.label}
+                    </Button>
+                  ))}
               <div className="flex flex-wrap gap-2">
-                {showHero.map((c) => (
+                {(idle ? showHero.filter((c) => c.action.type !== "wait") : showHero).map((c) => (
                   <Button
                     key={c.id}
-                    size="lg"
+                    size={idle ? "default" : "lg"}
                     variant={c.action.type === "skirmish" && c.id === "flee" ? "secondary" : "default"}
                     disabled={c.disabled}
                     title={c.hint}
