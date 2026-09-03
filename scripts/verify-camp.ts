@@ -1,7 +1,8 @@
 import { emptyCamp } from "@/lib/game/camp";
 import { CHARACTER_BY_ID } from "@/lib/game/content/characters";
-import { applyAction, advanceTime, createGame } from "@/lib/game/engine";
+import { applyAction, advanceTime, createGame, getChoices } from "@/lib/game/engine";
 import type { GameState } from "@/lib/game/types";
+import { PACK_LIMITS } from "@/lib/game/types";
 
 function assert(cond: unknown, msg: string): asserts cond {
   if (!cond) throw new Error(msg);
@@ -42,8 +43,10 @@ console.log("eat gain", eatGain);
 s = forceHighCamp(s);
 s.meters = { ...s.meters, hunger: 50 };
 const hourBefore = s.hour;
+const daysBefore = s.daysSurvived;
 s = applyAction(s, { type: "eat" });
-assert(s.hour === hourBefore, `eat should cost 0 hours, hour ${hourBefore} -> ${s.hour}`);
+const eatElapsed = (s.daysSurvived - daysBefore) * 24 + (s.hour - hourBefore);
+assert(eatElapsed === 1, `eat should cost 1 hour, ${hourBefore} -> ${s.hour} (elapsed ${eatElapsed})`);
 assert(s.meters.hunger - 50 <= 23, `eat gain after forced hunger 50: ${s.meters.hunger - 50}`);
 
 s = forceHighCamp(s);
@@ -173,5 +176,145 @@ for (let i = 0; i < 40; i++) {
 }
 console.log("eliza at ~2am after travel", nightHits, "/40");
 assert(nightHits <= 6, `Eliza should almost never show at night without smoke, got ${nightHits}/40`);
+
+function packHonestyState(): GameState {
+  return {
+    ...forceHighCamp(createGame("Pack Honesty", "coat")),
+    season: "summer",
+    weather: "clear",
+    hour: 10,
+    dayOfYear: 40,
+    activeEncounterId: null,
+    skirmish: null,
+    dead: null,
+    camp: null,
+    campfire: false,
+  };
+}
+
+let emptyEat = packHonestyState();
+emptyEat.inventory = { ...emptyEat.inventory, rations: 0 };
+emptyEat.meters = { ...emptyEat.meters, hunger: 40 };
+const emptyHunger = emptyEat.meters.hunger;
+const emptyHour = emptyEat.hour;
+emptyEat = applyAction(emptyEat, { type: "eat" });
+assert(emptyEat.meters.hunger === emptyHunger, `eat with 0 rations must not raise hunger, ${emptyHunger} -> ${emptyEat.meters.hunger}`);
+assert(emptyEat.inventory.rations === 0, "eat with 0 rations spends nothing");
+assert(emptyEat.hour === emptyHour, "empty eat is a no-op and must not advance time");
+assert(/bag is empty/i.test(emptyEat.log.map((l) => l.text).join(" ")), "empty eat keeps the empty-bag line");
+
+let oneEat = packHonestyState();
+oneEat.inventory = { ...oneEat.inventory, rations: 1 };
+oneEat.meters = { ...oneEat.meters, hunger: 40 };
+const oneHour = oneEat.daysSurvived * 24 + oneEat.hour;
+oneEat = applyAction(oneEat, { type: "eat" });
+assert(oneEat.inventory.rations === 0, "eat with 1 ration spends it");
+assert(oneEat.meters.hunger > 40, `eat with 1 ration should raise hunger, got ${oneEat.meters.hunger}`);
+assert(oneEat.daysSurvived * 24 + oneEat.hour === oneHour + 1, "eat with 1 ration advances 1 hour");
+
+let cacheEat = packHonestyState();
+cacheEat.camp = emptyCamp("high-camp", {
+  cachePit: true,
+  cache: { rations: 2, water: 1, firewood: 0, pelts: 0, powder: 0, extras: [] },
+});
+cacheEat.inventory = { ...cacheEat.inventory, rations: 0, water: 0 };
+cacheEat.meters = { ...cacheEat.meters, hunger: 20, thirst: 20 };
+cacheEat = applyAction(cacheEat, { type: "eat" });
+assert(cacheEat.inventory.rations === 0, "cache eat leaves the pack empty");
+assert((cacheEat.camp?.cache.rations ?? 0) === 1, "eat spends camp cache when the pack is empty");
+assert(cacheEat.meters.hunger > 20, "cache eat raises hunger");
+assert(cacheEat.hour === 11, "cache eat costs an hour");
+
+cacheEat = { ...cacheEat, activeEncounterId: null, skirmish: null, dead: null };
+cacheEat = applyAction(cacheEat, { type: "drink" });
+assert(cacheEat.inventory.water === 0, "cache drink leaves the pack empty");
+assert((cacheEat.camp?.cache.water ?? 0) === 0, "drink spends camp cache when the pack is empty");
+assert(cacheEat.meters.thirst > 20, "cache drink raises thirst");
+assert(cacheEat.hour === 12, "cache drink costs an hour");
+
+let emptyDrink = packHonestyState();
+emptyDrink.inventory = { ...emptyDrink.inventory, water: 0 };
+emptyDrink.meters = { ...emptyDrink.meters, thirst: 40 };
+const emptyThirst = emptyDrink.meters.thirst;
+emptyDrink = applyAction(emptyDrink, { type: "drink" });
+assert(emptyDrink.meters.thirst === emptyThirst, "drink with 0 water must not raise thirst");
+assert(emptyDrink.hour === 10, "empty drink is a no-op");
+
+let uiEmpty = packHonestyState();
+uiEmpty.inventory = { ...uiEmpty.inventory, rations: 0, water: 0 };
+uiEmpty.meters = { ...uiEmpty.meters, hunger: 20, thirst: 20 };
+const emptyChoices = getChoices(uiEmpty);
+const eatChoice = emptyChoices.find((c) => c.id === "eat");
+const drinkChoice = emptyChoices.find((c) => c.id === "drink");
+assert(eatChoice?.disabled, "eat is disabled when pack and cache are empty");
+assert(drinkChoice?.disabled, "drink is disabled when pack and cache are empty");
+
+let uiCache = packHonestyState();
+uiCache.inventory = { ...uiCache.inventory, rations: 0, water: 0 };
+uiCache.meters = { ...uiCache.meters, hunger: 20, thirst: 20 };
+uiCache.camp = emptyCamp("high-camp", {
+  cachePit: true,
+  cache: { rations: 3, water: 2, firewood: 0, pelts: 0, powder: 0, extras: [] },
+});
+const cacheChoices = getChoices(uiCache);
+const eatFromCache = cacheChoices.find((c) => c.id === "eat");
+const drinkFromCache = cacheChoices.find((c) => c.id === "drink");
+assert(eatFromCache && !eatFromCache.disabled, "eat stays available from camp cache");
+assert(drinkFromCache && !drinkFromCache.disabled, "drink stays available from camp cache");
+assert(eatFromCache.hint === "3 left", `eat hint should count cache, got ${eatFromCache.hint}`);
+assert(drinkFromCache.hint === "2 left", `drink hint should count cache, got ${drinkFromCache.hint}`);
+
+let fullWater = packHonestyState();
+fullWater.locationId = "creek";
+fullWater.knownLocations = Array.from(new Set(["creek", ...fullWater.knownLocations]));
+fullWater.inventory = { ...fullWater.inventory, water: PACK_LIMITS.water };
+fullWater = applyAction(fullWater, { type: "gatherWater" });
+assert(
+  fullWater.inventory.water <= PACK_LIMITS.water,
+  `gatherWater must not exceed pack water cap, got ${fullWater.inventory.water}`,
+);
+assert(fullWater.inventory.water === PACK_LIMITS.water, "full pack stays at the water cap");
+assert(/honest limit/i.test(fullWater.log.map((l) => l.text).join(" ")), "refused water leftover is logged");
+
+let campWater = packHonestyState();
+campWater.locationId = "creek";
+campWater.knownLocations = Array.from(new Set(["creek", ...campWater.knownLocations]));
+campWater.camp = emptyCamp("creek", {
+  cachePit: true,
+  cache: { rations: 0, water: 0, firewood: 0, pelts: 0, powder: 0, extras: [] },
+});
+campWater.inventory = { ...campWater.inventory, water: PACK_LIMITS.water };
+campWater = applyAction(campWater, { type: "gatherWater" });
+assert(campWater.inventory.water === PACK_LIMITS.water, "pack stays at water cap when overflowing to cache");
+assert((campWater.camp?.cache.water ?? 0) === 2, `overflow water should hit the cache, got ${campWater.camp?.cache.water}`);
+
+let jammedWater = packHonestyState();
+jammedWater.locationId = "creek";
+jammedWater.camp = emptyCamp("creek", {
+  cachePit: true,
+  cache: { rations: 0, water: 10, firewood: 0, pelts: 0, powder: 0, extras: [] },
+});
+jammedWater.inventory = { ...jammedWater.inventory, water: PACK_LIMITS.water };
+jammedWater = applyAction(jammedWater, { type: "gatherWater" });
+assert(jammedWater.inventory.water === PACK_LIMITS.water, "full pack and full cache refuse more water");
+assert((jammedWater.camp?.cache.water ?? 0) === 10, "full cache does not grow past its cap");
+assert(/cache will not take/i.test(jammedWater.log.map((l) => l.text).join(" ")), "full-cache leftover is logged");
+
+let fullWood = packHonestyState();
+fullWood.locationId = "high-camp";
+fullWood.inventory = { ...fullWood.inventory, firewood: PACK_LIMITS.firewood };
+fullWood = applyAction(fullWood, { type: "gatherWood" });
+assert(
+  fullWood.inventory.firewood <= PACK_LIMITS.firewood,
+  `gatherWood must not exceed pack firewood cap, got ${fullWood.inventory.firewood}`,
+);
+
+console.log("pack honesty", {
+  emptyEatHour: emptyEat.hour,
+  oneEatRations: oneEat.inventory.rations,
+  cacheRations: cacheEat.camp?.cache.rations,
+  gatherWater: fullWater.inventory.water,
+  overflowCache: campWater.camp?.cache.water,
+});
 
 console.log("ok");

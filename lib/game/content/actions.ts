@@ -1,4 +1,4 @@
-import { campMenuChoices } from "@/lib/game/camp";
+import { accessibleCount, campMenuChoices } from "@/lib/game/camp";
 import { CHARACTER_BY_ID } from "@/lib/game/content/characters";
 import { LOCATION_BY_ID } from "@/lib/game/content/locations";
 import type { Choice, GameState, LocationId, TimeBand, Weather } from "@/lib/game/types";
@@ -682,9 +682,10 @@ export function campChoices(state: GameState): Choice[] {
     });
   }
 
-  const showEat =
-    state.meters.hunger < 70 || (state.inventory.rations > 0 && state.meters.hunger < 85);
-  if (starving && state.inventory.rations <= 0) {
+  const rationsOnHand = accessibleCount(state, "rations");
+  const waterOnHand = accessibleCount(state, "water");
+  const showEat = state.meters.hunger < 70 || (rationsOnHand > 0 && state.meters.hunger < 85);
+  if (starving && rationsOnHand <= 0) {
     must.push({
       id: "eat",
       label: "The bag is empty",
@@ -692,20 +693,19 @@ export function campChoices(state: GameState): Choice[] {
       hint: "No rations",
       action: { type: "eat" },
     });
-  } else if (showEat && state.inventory.rations > 0) {
+  } else if (showEat && rationsOnHand > 0) {
     const eat: Choice = {
       id: "eat",
       label: pick(rng, ["Eat", "Chew a ration", "Take a bite"]),
-      hint: `${state.inventory.rations} left`,
+      hint: `${rationsOnHand} left`,
       action: { type: "eat" },
     };
     if (starving) must.unshift(eat);
     else good.push(eat);
   }
 
-  const showDrink =
-    state.meters.thirst < 70 || (state.inventory.water > 0 && state.meters.thirst < 85);
-  if (parched && state.inventory.water <= 0) {
+  const showDrink = state.meters.thirst < 70 || (waterOnHand > 0 && state.meters.thirst < 85);
+  if (parched && waterOnHand <= 0) {
     must.push({
       id: "drink",
       label: "The canteen is a drum",
@@ -713,11 +713,11 @@ export function campChoices(state: GameState): Choice[] {
       hint: "Canteen empty",
       action: { type: "drink" },
     });
-  } else if (showDrink && state.inventory.water > 0) {
+  } else if (showDrink && waterOnHand > 0) {
     const drink: Choice = {
       id: "drink",
       label: pick(rng, ["Drink", "A swallow", "Wet your mouth"]),
-      hint: `${state.inventory.water} left`,
+      hint: `${waterOnHand} left`,
       action: { type: "drink" },
     };
     if (parched) must.push(drink);

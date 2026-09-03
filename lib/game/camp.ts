@@ -104,6 +104,60 @@ export function packRoom(inv: Inventory, item: CampStowItem): number {
   return Math.max(0, PACK_LIMITS[item] - inv[item]);
 }
 
+/** Pack count plus camp cache when standing on your own bench. */
+export function accessibleCount(state: GameState, item: CampStowItem): number {
+  const pack = state.inventory[item];
+  const cache = atOwnCamp(state) ? state.camp!.cache[item] : 0;
+  return pack + cache;
+}
+
+function packOverflowNote(
+  item: CampStowItem,
+  cached: number,
+  refused: number,
+  atCamp: boolean,
+): string | null {
+  if (cached <= 0 && refused <= 0) return null;
+  const limit = `The pack is already at its honest limit (${PACK_LIMITS[item]} ${item}).`;
+  if (refused > 0 && atCamp) return `${limit} The cache will not take the rest.`;
+  if (refused > 0) return `${limit} Leftover stays where it fell.`;
+  return `${limit} Leftover goes in the cache.`;
+}
+
+/**
+ * Add stackables to the pack up to PACK_LIMITS. Overflow at own camp
+ * fills the cache if the cache has room; anything still left is refused.
+ */
+export function addToPack(
+  state: GameState,
+  item: CampStowItem,
+  amount: number,
+): { state: GameState; packed: number; cached: number; refused: number; note: string | null } {
+  if (amount <= 0) {
+    return { state, packed: 0, cached: 0, refused: 0, note: null };
+  }
+  const inventory = { ...state.inventory, extras: [...state.inventory.extras] };
+  const packed = Math.min(amount, packRoom(inventory, item));
+  inventory[item] += packed;
+  let leftover = amount - packed;
+  let cached = 0;
+  let camp = state.camp ? cloneCamp(state.camp) : state.camp;
+  const atCamp = atOwnCamp(state);
+  if (leftover > 0 && atCamp && camp) {
+    const room = Math.max(0, cacheCap(camp, item) - camp.cache[item]);
+    cached = Math.min(leftover, room);
+    camp.cache[item] += cached;
+    leftover -= cached;
+  }
+  return {
+    state: { ...state, inventory, camp: camp ?? null },
+    packed,
+    cached,
+    refused: leftover,
+    note: packOverflowNote(item, cached, leftover, atCamp),
+  };
+}
+
 export function packLeftover(
   inv: Inventory,
   cache: CampCache,
