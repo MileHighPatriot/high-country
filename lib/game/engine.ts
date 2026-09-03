@@ -2099,7 +2099,7 @@ export function getChoices(state: GameState): Choice[] {
   }
   if (state.pendingRoll) {
     const enc = getActiveEncounter(state);
-    const retreats =
+    const retreats: Choice[] =
       enc?.choices
         .filter((c) => !c.check)
         .map((c) => {
