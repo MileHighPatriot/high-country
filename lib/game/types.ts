@@ -1,7 +1,7 @@
 export type Season = "spring" | "summer" | "fall" | "winter";
 export type Weather = "clear" | "wind" | "snow" | "blizzard" | "storm";
 export type Trait = "eye" | "grit" | "savvy" | "hands";
-export type Kit = "rations" | "powder" | "coat";
+export type Kit = "rations" | "powder" | "coat" | "snowshoes" | "pot" | "fatwood";
 export type RangeBand = "far" | "near" | "close";
 export type TimeBand = "night" | "dawn" | "morning" | "afternoon" | "dusk";
 export type EncounterTrigger =

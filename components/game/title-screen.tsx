@@ -24,6 +24,21 @@ const KITS: { id: Kit; title: string; copy: string }[] = [
     title: "Wool coat",
     copy: "A coat that has already outlived a man. Grit +1. The wind notices you less.",
   },
+  {
+    id: "snowshoes",
+    title: "Snowshoes",
+    copy: "Ash frames and babiche. Savvy +1. Snow takes an hour less of you.",
+  },
+  {
+    id: "pot",
+    title: "Tin pot",
+    copy: "Black tin that has boiled other names. Hands +1. Steam becomes a plan.",
+  },
+  {
+    id: "fatwood",
+    title: "Fatwood",
+    copy: "A stick of pitch, mean and holy. Hands +1. The blizzard does not get the first spark.",
+  },
 ];
 
 export function TitleScreen() {
@@ -80,7 +95,7 @@ export function TitleScreen() {
             />
           </label>
           <p className="text-xs tracking-widest text-stone-300 uppercase">Starting kit</p>
-          <div className="grid gap-2 sm:grid-cols-3">
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
             {KITS.map((k) => (
               <button
                 key={k.id}

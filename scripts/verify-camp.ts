@@ -317,4 +317,30 @@ console.log("pack honesty", {
   overflowCache: campWater.camp?.cache.water,
 });
 
+const shoes = createGame("Kit Snow", "snowshoes");
+assert(shoes.inventory.extras.includes("snowshoes"), "snowshoes kit carries snowshoes");
+assert(shoes.traits.savvy === 2, `snowshoes kit should be savvy 2, got ${shoes.traits.savvy}`);
+assert(!shoes.inventory.coat, "snowshoes kit is not the coat");
+
+const pot = createGame("Kit Pot", "pot");
+assert(pot.inventory.extras.includes("tin-pot"), "tin pot kit carries the pot");
+assert(pot.traits.hands === 2, `tin pot kit should be hands 2, got ${pot.traits.hands}`);
+assert(!pot.inventory.coat, "tin pot kit is not the coat");
+
+const pitch = createGame("Kit Pitch", "fatwood");
+assert(pitch.inventory.extras.includes("fatwood"), "fatwood kit carries fatwood");
+assert(pitch.traits.hands === 2, `fatwood kit should be hands 2, got ${pitch.traits.hands}`);
+assert(!pitch.inventory.coat, "fatwood kit is not the coat");
+
+const wool = createGame("Kit Coat", "coat");
+assert(wool.inventory.coat, "coat kit still starts with the coat");
+assert(wool.traits.grit === 2, `coat kit should be grit 2, got ${wool.traits.grit}`);
+
+console.log("kits", {
+  snowshoes: shoes.inventory.extras,
+  pot: pot.inventory.extras,
+  fatwood: pitch.inventory.extras,
+  coat: wool.inventory.coat,
+});
+
 console.log("ok");
