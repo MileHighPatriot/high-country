@@ -749,6 +749,15 @@ export function createGame(name: string, kit: Kit): GameState {
   } else if (kit === "powder") {
     inventory.powder += 4;
     traits.eye += 1;
+  } else if (kit === "snowshoes") {
+    inventory.extras.push("snowshoes");
+    traits.savvy += 1;
+  } else if (kit === "pot") {
+    inventory.extras.push("tin-pot");
+    traits.hands += 1;
+  } else if (kit === "fatwood") {
+    inventory.extras.push("fatwood");
+    traits.hands += 1;
   } else {
     inventory.coat = true;
     meters.warmth = Math.max(meters.warmth, 70);
