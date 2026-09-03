@@ -62,6 +62,7 @@ import type {
   LogEntry,
   Meters,
   Outcome,
+  PendingRoll,
   RangeBand,
   RollResult,
   Season,
@@ -230,6 +231,83 @@ function rollPenalty(state: GameState): number {
   if (state.meters.energy < 25) p += 1;
   if (state.meters.health < 30) p += 1;
   return p;
+}
+
+export function isDramaticCheck(enc: EncounterDef, option: EncounterChoice): boolean {
+  if (!option.check) return false;
+  if (enc.intense) return true;
+  if (option.check.dc >= 14) return true;
+  return Boolean(
+    option.success?.death ||
+      option.fail?.death ||
+      option.success?.startSkirmish ||
+      option.fail?.startSkirmish,
+  );
+}
+
+function makePendingRoll(state: GameState, enc: EncounterDef, option: EncounterChoice): PendingRoll | null {
+  if (!option.check) return null;
+  return {
+    optionId: option.id,
+    encounterId: enc.id,
+    label: option.label,
+    trait: option.check.trait,
+    dc: option.check.dc,
+    modifier: state.traits[option.check.trait],
+    penalty: rollPenalty(state),
+  };
+}
+
+function rollLine(roll: RollResult, prefix?: string) {
+  const head = prefix ? `${prefix} — ` : "";
+  return `${head}d20 ${roll.d20} + ${roll.trait} ${roll.modifier} − weariness ${roll.penalty} = ${roll.total} vs DC ${roll.dc} — ${roll.success ? "success" : "fail"}.`;
+}
+
+function resultFromPending(pending: PendingRoll): RollResult | null {
+  if (pending.d20 == null) return null;
+  const total = pending.total ?? pending.d20 + pending.modifier - pending.penalty;
+  const success =
+    pending.success ??
+    ((total >= pending.dc || pending.d20 === 20) && pending.d20 !== 1);
+  return {
+    d20: pending.d20,
+    trait: pending.trait,
+    modifier: pending.modifier,
+    penalty: pending.penalty,
+    dc: pending.dc,
+    total,
+    success,
+  };
+}
+
+function castPendingDie(state: GameState): GameState {
+  const pending = state.pendingRoll;
+  if (!pending || pending.d20 != null) return state;
+  const rolled = rollCheck(state, pending.trait, pending.dc);
+  return {
+    ...rolled.state,
+    pendingRoll: {
+      ...pending,
+      d20: rolled.roll.d20,
+      success: rolled.roll.success,
+      total: rolled.roll.total,
+    },
+  };
+}
+
+function finishPendingDie(state: GameState): GameState {
+  const pending = state.pendingRoll;
+  if (!pending || pending.d20 == null) return state;
+  const enc = getActiveEncounter(state) ?? allEncounters().find((e) => e.id === pending.encounterId);
+  const option = enc?.choices.find((c) => c.id === pending.optionId);
+  const roll = resultFromPending(pending);
+  let next: GameState = { ...state, pendingRoll: null, activeEncounterId: null };
+  if (roll) next = appendLog(next, rollLine(roll, pending.label), roll);
+  if (option?.check) {
+    const branch = roll?.success ? option.success : option.fail;
+    if (branch) next = applyOutcome(next, branch);
+  }
+  return next;
 }
 
 export function rollCheck(
@@ -590,6 +668,11 @@ function beginEncounter(state: GameState, enc: EncounterDef): GameState {
   };
   if (enc.characterId) next.presentCharacterId = enc.characterId;
   next = appendLog(next, enc.text);
+  if (enc.intense) {
+    const risky = enc.choices.find((c) => c.check);
+    const pending = risky ? makePendingRoll(next, enc, risky) : null;
+    if (pending) next = { ...next, pendingRoll: pending };
+  }
   return next;
 }
 
@@ -807,6 +890,7 @@ export function createGame(name: string, kit: Kit): GameState {
     activeEncounterId: null,
     log: [],
     skirmish: null,
+    pendingRoll: null,
     campfire: false,
     campfireHours: 0,
     camp: null,
@@ -827,10 +911,15 @@ export function createGame(name: string, kit: Kit): GameState {
 
 function resolveEncounterChoice(state: GameState, optionId: string): GameState {
   const enc = getActiveEncounter(state);
-  if (!enc) return { ...state, activeEncounterId: null };
+  if (!enc) return { ...state, activeEncounterId: null, pendingRoll: null };
   const option = enc.choices.find((c) => c.id === optionId);
-  if (!option) return { ...state, activeEncounterId: null };
-  return resolveChoice(state, option, true);
+  if (!option) return { ...state, activeEncounterId: null, pendingRoll: null };
+  if (option.check && isDramaticCheck(enc, option)) {
+    if (state.pendingRoll?.optionId === option.id && state.pendingRoll.d20 == null) return state;
+    const pending = makePendingRoll(state, enc, option);
+    return pending ? { ...state, pendingRoll: pending } : state;
+  }
+  return resolveChoice({ ...state, pendingRoll: null }, option, true);
 }
 
 function resolveChoice(state: GameState, option: EncounterChoice, closeEncounter: boolean): GameState {
@@ -839,8 +928,7 @@ function resolveChoice(state: GameState, option: EncounterChoice, closeEncounter
     const rolled = rollCheck(next, option.check.trait, option.check.dc);
     next = rolled.state;
     const branch = rolled.roll.success ? option.success : option.fail;
-    const rollLine = `d20 ${rolled.roll.d20} + ${rolled.roll.trait} ${rolled.roll.modifier} − weariness ${rolled.roll.penalty} = ${rolled.roll.total} vs DC ${rolled.roll.dc} — ${rolled.roll.success ? "success" : "fail"}.`;
-    next = appendLog(next, rollLine, rolled.roll);
+    next = appendLog(next, rollLine(rolled.roll), rolled.roll);
     if (branch) next = applyOutcome(next, branch);
     return next;
   }
@@ -1556,7 +1644,21 @@ function collectCampJob(state: GameState, id: string): GameState {
 export function applyAction(state: GameState, action: GameAction): GameState {
   if (state.dead) return state;
   if (state.skirmish && action.type !== "skirmish") return state;
-  if (state.activeEncounterId && action.type !== "encounterChoice" && action.type !== "skirmish") {
+  if (
+    state.pendingRoll &&
+    action.type !== "castDie" &&
+    action.type !== "finishDie" &&
+    action.type !== "encounterChoice"
+  ) {
+    return state;
+  }
+  if (
+    state.activeEncounterId &&
+    action.type !== "encounterChoice" &&
+    action.type !== "skirmish" &&
+    action.type !== "castDie" &&
+    action.type !== "finishDie"
+  ) {
     if (getActiveEncounter(state)) return state;
     state = { ...state, activeEncounterId: null };
   }
@@ -1922,6 +2024,10 @@ export function applyAction(state: GameState, action: GameAction): GameState {
       return travel(state, action.to);
     case "encounterChoice":
       return resolveEncounterChoice(state, action.optionId);
+    case "castDie":
+      return castPendingDie(state);
+    case "finishDie":
+      return finishPendingDie(state);
     case "skirmish":
       return resolveSkirmish(state, action.move);
     case "pitchCamp":
@@ -1954,6 +2060,22 @@ export function getChoices(state: GameState): Choice[] {
       { id: "flee", label: "Flee", hint: "Grit", action: { type: "skirmish", move: "flee" } },
     ];
   }
+  if (state.pendingRoll) {
+    const enc = getActiveEncounter(state);
+    if (!enc) return [];
+    return enc.choices
+      .filter((c) => !c.check)
+      .map((c) => {
+        const afford = choiceAffordable(state, c);
+        return {
+          id: c.id,
+          label: c.label,
+          disabled: !afford,
+          hint: "Leave the die on the table",
+          action: { type: "encounterChoice" as const, optionId: c.id },
+        };
+      });
+  }
   if (state.activeEncounterId) {
     const enc = getActiveEncounter(state);
     if (!enc) return campChoices(state);
@@ -1970,7 +2092,11 @@ export function getChoices(state: GameState): Choice[] {
         id: c.id,
         label: c.label,
         disabled: !afford,
-        hint: c.check ? `d20 + ${c.check.trait} vs ${c.check.dc}` : costHint,
+        hint: c.check
+          ? isDramaticCheck(enc, c)
+            ? `Roll the die · ${c.check.trait} vs ${c.check.dc}`
+            : `d20 + ${c.check.trait} vs ${c.check.dc}`
+          : costHint,
         action: { type: "encounterChoice" as const, optionId: c.id },
       };
     });

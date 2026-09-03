@@ -108,6 +108,21 @@ export interface RollResult {
   success: boolean;
 }
 
+/** A click-to-roll check. Present while the bone d20 is on the table. */
+export interface PendingRoll {
+  optionId: string;
+  encounterId: EncounterId;
+  label: string;
+  trait: Trait;
+  dc: number;
+  modifier: number;
+  penalty: number;
+  /** Set after the player clicks the die. */
+  d20?: number;
+  success?: boolean;
+  total?: number;
+}
+
 export interface LogEntry {
   id: string;
   text: string;
@@ -161,6 +176,8 @@ export interface GameState {
   activeEncounterId: EncounterId | null;
   log: LogEntry[];
   skirmish: SkirmishState | null;
+  /** Missing on older saves — no die on the table. */
+  pendingRoll?: PendingRoll | null;
   campfire: boolean;
   /** Hours of burn left. Missing on older saves — treat a live fire as a few hours remaining. */
   campfireHours?: number;
@@ -206,6 +223,8 @@ export type GameAction =
   | { type: "startJob"; kind: CampJobKind }
   | { type: "collectJob"; id: string }
   | { type: "encounterChoice"; optionId: string }
+  | { type: "castDie" }
+  | { type: "finishDie" }
   | { type: "skirmish"; move: SkirmishMove };
 
 export interface Choice {
@@ -270,6 +289,8 @@ export interface EncounterDef {
   triggers?: EncounterTrigger[];
   /** If true, `seenEncounterIds` will not block this beat. Default false. */
   repeatable?: boolean;
+  /** Puts a real d20 on the table when this beat begins. */
+  intense?: boolean;
 }
 
 export interface Connection {
