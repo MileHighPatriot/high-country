@@ -235,32 +235,37 @@ function findChoice(choices: Choice[], pred: (c: Choice) => boolean) {
 function CampStage({
   state,
   choices,
+  spots,
   waiting,
   onAct,
 }: {
   state: GameState;
   choices: Choice[];
+  spots: Choice[];
   waiting: boolean;
   onAct: (c: Choice) => void;
 }) {
+  const pool = [...choices, ...spots];
   const atCamp = Boolean(state.camp && state.camp.locationId === state.locationId);
   const scene = state.waitScene;
   const personId = state.presentCharacterId ?? (waiting ? scene?.arrivalId : null) ?? null;
   const person = personId ? CHARACTER_BY_ID[personId] : null;
-  const talk = findChoice(choices, (c) => c.action.type === "talk");
+  const talk = findChoice(pool, (c) => c.action.type === "talk");
   const fireChoice = findChoice(
-    choices,
+    pool,
     (c) => c.action.type === "makeFire" || c.action.type === "tendFire" || c.id === "camp-fire",
   );
-  const woodChoice = findChoice(choices, (c) => c.action.type === "gatherWood" || c.id === "camp-wood");
-  const leanChoice = findChoice(choices, (c) => c.id === "camp-lean" || (c.action.type === "build" && c.action.piece === "leanTo"));
-  const waterChoice = findChoice(choices, (c) => c.action.type === "gatherWater");
-  const trails = choices.filter((c) => c.action.type === "travel").slice(0, 3);
-  const showLean = atCamp && (state.camp?.leanTo || leanChoice);
-  const showPile = atCamp && (state.camp?.woodpile || woodChoice);
-  const showFire = state.campfire || (atCamp && (state.camp?.fireRing || fireChoice));
+  const woodChoice = findChoice(pool, (c) => c.id === "camp-wood" || c.action.type === "gatherWood");
+  const leanChoice = findChoice(
+    pool,
+    (c) => c.id === "camp-lean" || (c.action.type === "build" && c.action.piece === "leanTo"),
+  );
+  const showLean = atCamp && (Boolean(state.camp?.leanTo) || Boolean(leanChoice));
+  const showPile = atCamp && (Boolean(state.camp?.woodpile) || Boolean(woodChoice));
+  const showFire = state.campfire || (atCamp && (Boolean(state.camp?.fireRing) || Boolean(fireChoice)));
   const fireDying = waiting && scene?.fireDies;
   const arrivalIn = waiting && scene?.arrivalId && !state.presentCharacterId;
+  const waterChoice = findChoice(pool, (c) => c.action.type === "gatherWater");
 
   return (
     <div className="pointer-events-none absolute inset-0 z-[8]">
@@ -268,7 +273,7 @@ function CampStage({
         <button
           type="button"
           className="hc-camp-piece pointer-events-auto"
-          style={{ left: "6%", bottom: "14%", width: "min(42vw, 28rem)" }}
+          style={{ left: "4%", bottom: "42%", width: "min(26vw, 15rem)" }}
           disabled={!leanChoice || waiting}
           onClick={() => leanChoice && onAct(leanChoice)}
         >
@@ -281,7 +286,7 @@ function CampStage({
         <button
           type="button"
           className={cn("hc-camp-piece pointer-events-auto", fireDying && "hc-fire-dying")}
-          style={{ left: "38%", bottom: "10%", width: "min(28vw, 16rem)" }}
+          style={{ left: "36%", bottom: "38%", width: "min(20vw, 12rem)" }}
           disabled={!fireChoice || waiting}
           onClick={() => fireChoice && onAct(fireChoice)}
         >
@@ -294,7 +299,7 @@ function CampStage({
         <button
           type="button"
           className="hc-camp-piece pointer-events-auto"
-          style={{ left: "62%", bottom: "12%", width: "min(32vw, 18rem)" }}
+          style={{ left: "56%", bottom: "40%", width: "min(22vw, 13rem)" }}
           disabled={!woodChoice || waiting}
           onClick={() => woodChoice && onAct(woodChoice)}
         >
@@ -303,11 +308,22 @@ function CampStage({
           <span className="hc-camp-name">{woodChoice?.label ?? "Woodpile"}</span>
         </button>
       )}
+      {waterChoice && (
+        <button
+          type="button"
+          className="hc-camp-hit pointer-events-auto"
+          style={{ left: "8%", bottom: "34%" }}
+          disabled={waterChoice.disabled || waiting}
+          onClick={() => onAct(waterChoice)}
+        >
+          {waterChoice.label}
+        </button>
+      )}
       {person?.art && (
         <button
           type="button"
           className={cn("hc-camp-figure pointer-events-auto", arrivalIn && "hc-figure-in")}
-          style={{ left: "3%", bottom: "22%" }}
+          style={{ right: "3%", left: "auto", bottom: "36%" }}
           disabled={!talk || waiting}
           onClick={() => talk && onAct(talk)}
         >
@@ -316,30 +332,6 @@ function CampStage({
           <span className="hc-camp-name">{person.name}</span>
         </button>
       )}
-      {waterChoice && (
-        <button
-          type="button"
-          className="hc-camp-hit pointer-events-auto"
-          style={{ left: "16%", bottom: "8%" }}
-          disabled={waterChoice.disabled || waiting}
-          onClick={() => onAct(waterChoice)}
-        >
-          {waterChoice.label}
-        </button>
-      )}
-      {!waiting &&
-        trails.map((c, i) => (
-          <button
-            key={c.id}
-            type="button"
-            className="hc-camp-hit pointer-events-auto"
-            style={{ left: `${18 + i * 28}%`, bottom: "3%" }}
-            disabled={c.disabled}
-            onClick={() => onAct(c)}
-          >
-            {c.label}
-          </button>
-        ))}
     </div>
   );
 }
@@ -389,8 +381,18 @@ function WaitPlay({
           : "Someone uses the hour.";
 
   return (
-    <div className="pointer-events-none absolute inset-x-0 bottom-[38%] z-[9] flex justify-center px-4">
-      <p className="rounded-md bg-black/55 px-4 py-2 text-sm tracking-wide text-amber-100/90">{line}</p>
+    <div className="absolute inset-x-0 top-[12%] z-[20] flex justify-center px-4">
+      <button
+        type="button"
+        className="rounded-md bg-black/60 px-4 py-2 text-sm tracking-wide text-amber-100/90 hover:bg-black/75"
+        onClick={() => {
+          if (done.current) return;
+          done.current = true;
+          onDoneRef.current();
+        }}
+      >
+        {line} <span className="text-stone-400">· skip</span>
+      </button>
     </div>
   );
 }
@@ -546,9 +548,26 @@ export function PlayScreen() {
       <div className={`absolute inset-0 transition-colors duration-[1800ms] ${timeGrade(state.hour)}`} />
       <LivingPlate tell={tell} />
       <div className="absolute inset-0 bg-gradient-to-t from-black via-black/55 to-black/25" />
-      <CampStage state={state} choices={choices} waiting={Boolean(state.waitScene)} onAct={act} />
+      <CampStage
+        state={state}
+        choices={choices}
+        spots={spots}
+        waiting={Boolean(state.waitScene)}
+        onAct={act}
+      />
       {state.waitScene && (
-        <WaitPlay scene={state.waitScene} onDone={() => commit(state, { type: "finishWait" })} />
+        <WaitPlay
+          scene={state.waitScene}
+          onDone={() => {
+            setState((s) => {
+              if (!s?.waitScene) return s;
+              const next = applyAction(s, { type: "finishWait" });
+              const seq = cinemaAfterAction(s, next);
+              if (seq) window.setTimeout(() => setCinema(seq), 0);
+              return next;
+            });
+          }}
+        />
       )}
 
       <div className="relative z-10 mx-auto grid min-h-dvh max-w-6xl gap-6 px-4 py-4 lg:grid-cols-[1fr_280px] lg:items-end">
@@ -682,7 +701,16 @@ export function PlayScreen() {
                 </Sheet>
               )}
               {travel.length > 0 && (
-                <p className="text-[11px] text-stone-500">Trails sit on the ground. Click them there.</p>
+                <div className="space-y-2">
+                  <p className="text-[11px] tracking-[0.25em] text-amber-100/60 uppercase">Trails</p>
+                  <div className="flex flex-wrap gap-2">
+                    {travel.map((c) => (
+                      <Button key={c.id} size="sm" variant="outline" title={c.hint} onClick={() => act(c)}>
+                        {c.label}
+                      </Button>
+                    ))}
+                  </div>
+                </div>
               )}
             </div>
           )}

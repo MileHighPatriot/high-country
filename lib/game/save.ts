@@ -17,7 +17,7 @@ export function loadGame(): GameState | null {
       openingId: parsed.openingId ?? "legacy",
       skills: parsed.skills ?? {},
       companionId: parsed.companionId ?? null,
-      waitScene: parsed.waitScene ?? null,
+      waitScene: null,
     };
   } catch {
     return null;
@@ -35,7 +35,7 @@ export function saveGame(state: GameState) {
     }
     return;
   }
-  localStorage.setItem(SAVE_KEY, JSON.stringify(state));
+  localStorage.setItem(SAVE_KEY, JSON.stringify({ ...state, waitScene: null }));
 }
 
 export function clearSave() {

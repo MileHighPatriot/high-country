@@ -520,6 +520,7 @@ function applyOutcome(state: GameState, outcome: Outcome): GameState {
       detail: outcome.death.detail,
       daysSurvived: next.daysSurvived,
       season: next.season,
+      locationId: next.locationId,
     };
   }
   if (outcome.invite === "part") {

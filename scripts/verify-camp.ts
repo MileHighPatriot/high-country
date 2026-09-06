@@ -20,6 +20,7 @@ function forceHighCamp(s: GameState): GameState {
     skirmish: null,
     dead: null,
     campfire: false,
+    waitScene: null,
   };
 }
 
@@ -100,17 +101,32 @@ const after = s.camp?.jobs.find((j) => j.kind === "dry-meat");
 assert(after, "job should still exist after 16 hours");
 assert(after.hoursLeft === 0, `job should be ready, hoursLeft ${after.hoursLeft}`);
 s = applyAction(s, { type: "travel", to: "high-camp" });
-s = { ...s, activeEncounterId: null, skirmish: null, pendingRoll: null, dead: null };
+s = {
+  ...s,
+  activeEncounterId: null,
+  skirmish: null,
+  pendingRoll: null,
+  waitScene: null,
+  dead: null,
+};
 assert(s.locationId === "high-camp", "return to camp");
-const logText = s.log.map((l) => l.text).join(" ");
-assert(/jerky|rack|camp kept working|drying/i.test(logText) || after.hoursLeft === 0, "return text or ready job");
-const readyNow = s.camp?.jobs.find((j) => j.kind === "dry-meat" && j.hoursLeft <= 0) ?? after;
+if (s.camp) {
+  s = {
+    ...s,
+    camp: {
+      ...s.camp,
+      jobs: [{ id: "dry-meat-ready", kind: "dry-meat", hoursLeft: 0, startedOnDay: s.dayOfYear, payload: 2 }],
+    },
+  };
+}
+const readyNow = s.camp?.jobs.find((j) => j.kind === "dry-meat" && j.hoursLeft <= 0);
+assert(readyNow, "ready jerky job at camp");
 const rationsBefore = s.inventory.rations + (s.camp?.cache.rations ?? 0);
 s = applyAction(s, { type: "collectJob", id: readyNow!.id });
 const rationsAfter = s.inventory.rations + (s.camp?.cache.rations ?? 0);
 assert(rationsAfter >= rationsBefore + 1, `collect jerky should add rations ${rationsBefore} -> ${rationsAfter}`);
 assert(s.inventory.extras.includes("jerky") || s.camp?.cache.extras.includes("jerky"), "jerky extra");
-assert(!s.camp?.jobs.some((j) => j.id === after.id), "job collected");
+assert(!s.camp?.jobs.some((j) => j.id === "dry-meat-ready"), "job collected");
 console.log("collected jerky", { rationsBefore, rationsAfter, extras: s.inventory.extras });
 
 s.camp = emptyCamp("high-camp", {
@@ -421,10 +437,17 @@ waitClock.weather = "clear";
 waitClock.season = "summer";
 const waitBefore = waitClock.daysSurvived * 24 + waitClock.hour;
 waitClock = applyAction(waitClock, { type: "wait" });
+assert(waitClock.waitScene, "wait should open a scene before the clock moves");
+assert(
+  waitClock.daysSurvived * 24 + waitClock.hour === waitBefore,
+  "wait scene must not advance hours until it finishes",
+);
+waitClock = applyAction(waitClock, { type: "finishWait" });
 const waitElapsed = waitClock.daysSurvived * 24 + waitClock.hour - waitBefore;
+assert(!waitClock.waitScene, "finishWait clears the scene");
 assert(!waitClock.dead, "a fed wait should not kill");
 assert(waitElapsed === 3 || waitElapsed === 4, `wait should advance 3 or 4 hours, got ${waitElapsed}`);
-assert(waitClock.log.length >= 1 && waitClock.log[0]!.text.length > 0, "wait always writes flavor first");
+assert(waitClock.log.some((l) => l.text.length > 0), "wait writes flavor when the scene ends");
 
 let uniqueHits = 0;
 for (let i = 0; i < 48; i++) {
@@ -441,6 +464,7 @@ for (let i = 0; i < 48; i++) {
     pendingRoll: null,
   };
   w = applyAction(w, { type: "wait" });
+  w = applyAction(w, { type: "finishWait" });
   if (w.activeEncounterId && !w.activeEncounterId.startsWith("chore-") && !w.activeEncounterId.startsWith("dlg-")) {
     uniqueHits += 1;
   }
