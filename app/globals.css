@@ -478,6 +478,7 @@
 .hc-cinema-veil {
   position: absolute;
   inset: 0;
+  z-index: 2;
   background: linear-gradient(to top, rgba(0, 0, 0, 0.62) 0%, rgba(0, 0, 0, 0.18) 42%, rgba(0, 0, 0, 0.28) 100%);
   pointer-events: none;
 }

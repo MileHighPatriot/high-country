@@ -427,7 +427,7 @@ export function PlayScreen() {
           <Status state={state} />
         </div>
       </div>
-      {cinema && <Cinema sequence={cinema} onDone={() => setCinema(null)} />}
+      {cinema && <Cinema sequence={cinema} tell={tell} onDone={() => setCinema(null)} />}
     </div>
   );
 }
