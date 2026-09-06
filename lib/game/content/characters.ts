@@ -28,6 +28,7 @@ export const CHARACTERS: CharacterDef[] = [
               presentCharacter: "eliza-ward",
               markDialogue: "eliza-first",
               remember: { id: "eliza-ward", tag: "sat-at-fire" },
+              nextDialogue: "eliza-stove-talk",
             },
           },
           {
@@ -42,6 +43,7 @@ export const CHARACTERS: CharacterDef[] = [
               presentCharacter: "eliza-ward",
               markDialogue: "eliza-first",
               remember: { id: "eliza-ward", tag: "sat-at-fire" },
+              nextDialogue: "eliza-stove-talk",
             },
           },
           {
@@ -121,6 +123,7 @@ export const CHARACTERS: CharacterDef[] = [
               presentCharacter: "two-crows",
               markDialogue: "two-crows-trade",
               remember: { id: "two-crows", tag: "shared-meat" },
+              nextDialogue: "two-crows-sit",
             },
           },
           {
@@ -200,6 +203,7 @@ export const CHARACTERS: CharacterDef[] = [
               presentCharacter: "silas-crowe",
               markDialogue: "silas-advice",
               remember: { id: "silas-crowe", tag: "shared-meat" },
+              nextDialogue: "silas-more",
             },
           },
           {

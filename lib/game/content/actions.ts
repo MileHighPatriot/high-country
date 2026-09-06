@@ -661,6 +661,15 @@ export function campChoices(state: GameState): Choice[] {
       tier: "hero",
     });
   }
+  if (state.companionId) {
+    const p = CHARACTER_BY_ID[state.companionId];
+    must.push({
+      id: "part",
+      label: p ? `Part with ${p.name.split(" ")[0]}` : "Part ways",
+      action: { type: "partWays" },
+      tier: "hero",
+    });
+  }
 
   must.push({
     id: "wait",

@@ -11,6 +11,7 @@ import type {
   Inventory,
   LocationId,
 } from "@/lib/game/types";
+import { packCap } from "@/lib/game/progress";
 import { PACK_LIMITS, timeBand } from "@/lib/game/types";
 
 export const PITCHABLE = new Set<LocationId>([
@@ -97,11 +98,12 @@ export function cacheCap(camp: CampSite, item: CampStowItem): number {
     return item === "rations" ? ROCK_RATION_CAP : 0;
   }
   if (item === "firewood") return firewoodCap(camp);
-  return CACHE_CAPS[item];
+  const cellar = camp.cache.extras.includes("cellar") ? 2 : 1;
+  return CACHE_CAPS[item] * cellar;
 }
 
 export function packRoom(inv: Inventory, item: CampStowItem): number {
-  return Math.max(0, PACK_LIMITS[item] - inv[item]);
+  return Math.max(0, packCap(inv, item) - inv[item]);
 }
 
 /** Pack count plus camp cache when standing on your own bench. */
@@ -116,9 +118,11 @@ function packOverflowNote(
   cached: number,
   refused: number,
   atCamp: boolean,
+  extras: string[],
 ): string | null {
   if (cached <= 0 && refused <= 0) return null;
-  const limit = `The pack is already at its honest limit (${PACK_LIMITS[item]} ${item}).`;
+  const cap = packCap({ extras } as Inventory, item);
+  const limit = `The pack is already at its honest limit (${cap} ${item}).`;
   if (refused > 0 && atCamp) return `${limit} The cache will not take the rest.`;
   if (refused > 0) return `${limit} Leftover stays where it fell.`;
   return `${limit} Leftover goes in the cache.`;
@@ -154,7 +158,7 @@ export function addToPack(
     packed,
     cached,
     refused: leftover,
-    note: packOverflowNote(item, cached, leftover, atCamp),
+    note: packOverflowNote(item, cached, leftover, atCamp, inventory.extras),
   };
 }
 
@@ -600,6 +604,23 @@ export function campMenuChoices(state: GameState, rng: () => number): { must: Ch
       label: jobLabel(kind),
       hint: `${jobHours(kind)} hours`,
       action: { type: "startJob", kind },
+    });
+  }
+
+  if (state.inventory.pelts >= 2 && !state.inventory.extras.includes("hide-bag") && !state.inventory.extras.includes("parfleche")) {
+    good.push({
+      id: "sew-bag",
+      label: "Sew a hide bag",
+      hint: "2 pelts · more pack",
+      action: { type: "sewBag" },
+    });
+  }
+  if (camp.cachePit && !camp.cache.extras.includes("cellar")) {
+    good.push({
+      id: "cellar",
+      label: "Crib a cellar in the pit",
+      hint: "2 wood · 3 hours · more cache",
+      action: { type: "expandCache" },
     });
   }
 

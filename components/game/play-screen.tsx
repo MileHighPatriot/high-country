@@ -35,6 +35,7 @@ import {
   knownMap,
   METER_LABELS,
   placeName,
+  skillStatusLine,
   TRAIT_LINE,
 } from "@/lib/game/readout";
 import type { Choice, GameAction, GameState, Kit, LogEntry } from "@/lib/game/types";
@@ -187,7 +188,13 @@ function Status({ state }: { state: GameState }) {
         Eye {state.traits.eye} · Grit {state.traits.grit} · Savvy {state.traits.savvy} · Hands {state.traits.hands}
       </p>
       <p className="text-[11px] leading-snug text-stone-500">{TRAIT_LINE}</p>
-      {person && <p className="text-xs text-amber-100/80">Here: {person.name}</p>}
+      {skillStatusLine(state) && (
+        <p className="text-[11px] leading-snug text-amber-100/70">{skillStatusLine(state)}</p>
+      )}
+      {state.companionId && CHARACTER_BY_ID[state.companionId] && (
+        <p className="text-xs text-amber-100/90">Walking with {CHARACTER_BY_ID[state.companionId]!.name}</p>
+      )}
+      {person && !state.companionId && <p className="text-xs text-amber-100/80">Here: {person.name}</p>}
       {state.camp && (
         <p className="text-xs text-amber-100/70">
           Camp at {LOCATION_BY_ID[state.camp.locationId]?.name ?? state.camp.locationId}
@@ -216,6 +223,60 @@ function Status({ state }: { state: GameState }) {
       )}
       <CountryMap state={state} />
     </aside>
+  );
+}
+
+function plateHits(state: GameState, choices: Choice[]): Array<Choice & { x: number; y: number; kind: string }> {
+  const hits: Array<Choice & { x: number; y: number; kind: string }> = [];
+  const take = (kind: string, x: number, y: number, pred: (c: Choice) => boolean) => {
+    const c = choices.find(pred);
+    if (c && !hits.some((h) => h.id === c.id)) hits.push({ ...c, x, y, kind });
+  };
+  take("figure", 22, 38, (c) => c.action.type === "talk");
+  take(
+    "fire",
+    48,
+    62,
+    (c) => c.action.type === "makeFire" || c.action.type === "tendFire" || c.id === "camp-fire",
+  );
+  take("water", 18, 70, (c) => c.action.type === "gatherWater");
+  take("wood", 78, 64, (c) => c.action.type === "gatherWood" || c.id === "camp-wood");
+  const trails = choices.filter((c) => c.action.type === "travel");
+  trails.slice(0, 3).forEach((c, i) => {
+    const x = trails.length === 1 ? 50 : trails.length === 2 ? [28, 72][i]! : [18, 50, 82][i]!;
+    hits.push({ ...c, x, y: 84, kind: "trail" });
+  });
+  return hits;
+}
+
+function PlateHits({
+  state,
+  choices,
+  onAct,
+}: {
+  state: GameState;
+  choices: Choice[];
+  onAct: (c: Choice) => void;
+}) {
+  const hits = plateHits(state, choices);
+  if (hits.length === 0) return null;
+  return (
+    <div className="pointer-events-none absolute inset-0 z-[8]">
+      {hits.map((h) => (
+        <button
+          key={`plate-${h.id}`}
+          type="button"
+          disabled={h.disabled}
+          title={h.hint ?? h.label}
+          onClick={() => onAct(h)}
+          className="hc-plate-hit pointer-events-auto absolute -translate-x-1/2 -translate-y-1/2"
+          style={{ left: `${h.x}%`, top: `${h.y}%` }}
+        >
+          <span className="hc-plate-hit-dot" data-kind={h.kind} />
+          <span className="hc-plate-hit-label">{h.label}</span>
+        </button>
+      ))}
+    </div>
   );
 }
 
@@ -298,7 +359,7 @@ export function PlayScreen() {
     }
     if (action.type === "wait" && !isUrgentBeat(next) && !next.dead) {
       setChoiceHold(true);
-      holdTimer.current = window.setTimeout(() => setChoiceHold(false), 1400);
+      holdTimer.current = window.setTimeout(() => setChoiceHold(false), 2600);
     } else {
       setChoiceHold(false);
     }
@@ -353,12 +414,16 @@ export function PlayScreen() {
   const log = state.skirmish ? state.log.slice(-6) : state.log;
 
   return (
-    <div className="relative min-h-dvh overflow-hidden text-stone-100" data-living-tell={tell}>
+    <div
+      className={cn("relative min-h-dvh overflow-hidden text-stone-100", choiceHold && "hc-hour-play")}
+      data-living-tell={tell}
+    >
       <CrossfadePlate src={art.location} ken />
       <CrossfadePlate src={atmosphere} className="mix-blend-multiply opacity-45" />
       <div className={`absolute inset-0 transition-colors duration-[1800ms] ${timeGrade(state.hour)}`} />
       <LivingPlate tell={tell} />
       <div className="absolute inset-0 bg-gradient-to-t from-black via-black/55 to-black/25" />
+      {idle && !state.pendingRoll && <PlateHits state={state} choices={choices} onAct={act} />}
 
       <div className="relative z-10 mx-auto grid min-h-dvh max-w-6xl gap-6 px-4 py-4 lg:grid-cols-[1fr_280px] lg:items-end">
         <div className="relative flex flex-col justify-end gap-4 pb-4">

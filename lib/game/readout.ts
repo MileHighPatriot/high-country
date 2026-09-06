@@ -1,4 +1,5 @@
 import { LOCATION_BY_ID } from "@/lib/game/content/locations";
+import { skillStatusLine } from "@/lib/game/progress";
 import type {
   DeathCause,
   GameState,
@@ -133,3 +134,5 @@ export function knownMap(state: GameState): MapNode[] {
 export function seasonShort(season: Season): string {
   return { spring: "thaw", summer: "high summer", fall: "fall hunt", winter: "deep winter" }[season];
 }
+
+export { skillStatusLine };

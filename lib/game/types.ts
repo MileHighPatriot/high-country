@@ -196,6 +196,10 @@ export interface GameState {
   memories?: Record<string, string[]>;
   /** Flavor/debug id for the opening script. Missing on older saves. */
   openingId?: string;
+  /** Practice ranks 0–3. Missing on older saves. */
+  skills?: Partial<Record<"ice" | "sign" | "hide" | "rifle" | "camp", number>>;
+  /** Walks or sits with you until they part. Missing on older saves. */
+  companionId?: CharacterId | null;
   dead: DeathRecord | null;
   rngSeed: number;
 }
@@ -231,6 +235,9 @@ export type GameAction =
   | { type: "cook" }
   | { type: "startJob"; kind: CampJobKind }
   | { type: "collectJob"; id: string }
+  | { type: "sewBag" }
+  | { type: "expandCache" }
+  | { type: "partWays" }
   | { type: "encounterChoice"; optionId: string }
   | { type: "castDie" }
   | { type: "finishDie" }
@@ -272,6 +279,12 @@ export interface Outcome {
   relocate?: LocationId;
   /** After resolving, immediately begin this encounter if it exists. */
   followUpEncounter?: EncounterId;
+  /** Open this dialogue node on the present person. Keeps them here. */
+  nextDialogue?: string;
+  /** Stay the night, walk the next trail, or leave. */
+  invite?: "stay" | "walk" | "part";
+  /** Practice this craft when the beat resolves. */
+  skill?: "ice" | "sign" | "hide" | "rifle" | "camp";
   clearFire?: boolean;
   /** Extra sentence; concatenated onto `text` when applying. */
   scene?: string;
@@ -328,6 +341,8 @@ export interface DialogueNode {
   unlessExtra?: string;
   requiresMemory?: string;
   unlessMemory?: string;
+  /** Linger beats can fire even after they have been heard. */
+  repeatable?: boolean;
   text: string;
   choices: EncounterChoice[];
 }
