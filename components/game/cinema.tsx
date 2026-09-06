@@ -1,7 +1,9 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { LivingPlate } from "@/components/game/living-plate";
 import type { CinemaKen, CinemaSequence } from "@/lib/game/cinema";
+import type { LivingTell } from "@/lib/game/living-plate";
 
 function kenClass(ken?: CinemaKen) {
   if (ken === "push") return "hc-cinema-layer ken-push";
@@ -12,9 +14,11 @@ function kenClass(ken?: CinemaKen) {
 
 export function Cinema({
   sequence,
+  tell,
   onDone,
 }: {
   sequence: CinemaSequence;
+  tell?: LivingTell;
   onDone: () => void;
 }) {
   const [beat, setBeat] = useState(0);
@@ -101,6 +105,7 @@ export function Cinema({
             />
           );
         })}
+        {tell && <LivingPlate tell={tell} />}
         <div className="hc-cinema-veil" />
       </div>
       {showCard && sequence.card && (
