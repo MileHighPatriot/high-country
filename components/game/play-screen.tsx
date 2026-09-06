@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Cinema } from "@/components/game/cinema";
 import { FateDie } from "@/components/game/fate-die";
+import { LivingPlate } from "@/components/game/living-plate";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import {
@@ -32,6 +33,7 @@ import { loadGame, saveGame } from "@/lib/game/save";
 import type { Choice, GameAction, GameState, Kit } from "@/lib/game/types";
 import { timeBand } from "@/lib/game/types";
 import { cn } from "@/lib/utils";
+import { livingTellFromState, livingTellFrostsChrome } from "@/lib/game/living-plate";
 import { withBase } from "@/lib/paths";
 
 function timeAtmosphere(state: GameState, fallback: string) {
@@ -290,12 +292,14 @@ export function PlayScreen() {
   const idle = !isUrgentBeat(state);
   const showHero = idle ? hero : hero.filter((c) => c.action.type !== "travel");
   const atmosphere = timeAtmosphere(state, art.atmosphere);
+  const tell = livingTellFromState(state);
 
   return (
-    <div className="relative min-h-dvh overflow-hidden text-stone-100">
+    <div className="relative min-h-dvh overflow-hidden text-stone-100" data-living-tell={tell}>
       <CrossfadePlate src={art.location} ken />
       <CrossfadePlate src={atmosphere} className="mix-blend-multiply opacity-45" />
       <div className={`absolute inset-0 transition-colors duration-[1800ms] ${timeGrade(state.hour)}`} />
+      <LivingPlate tell={tell} />
       <div className="absolute inset-0 bg-gradient-to-t from-black via-black/55 to-black/25" />
 
       <div className="relative z-10 mx-auto grid min-h-dvh max-w-6xl gap-6 px-4 py-4 lg:grid-cols-[1fr_280px] lg:items-end">
@@ -340,7 +344,13 @@ export function PlayScreen() {
               onRetreat={act}
             />
           ) : (
-            <div className={cn("hc-choices space-y-3", choiceHold && "is-held")}>
+            <div
+              className={cn(
+                "hc-choices space-y-3",
+                choiceHold && "is-held",
+                livingTellFrostsChrome(tell) && "hc-live-frost",
+              )}
+            >
               {idle &&
                 showHero
                   .filter((c) => c.action.type === "wait")
