@@ -30,7 +30,14 @@ import {
   weatherLabel,
 } from "@/lib/game/engine";
 import { loadGame, saveGame } from "@/lib/game/save";
-import type { Choice, GameAction, GameState, Kit } from "@/lib/game/types";
+import {
+  deathCauseLabel,
+  knownMap,
+  METER_LABELS,
+  placeName,
+  TRAIT_LINE,
+} from "@/lib/game/readout";
+import type { Choice, GameAction, GameState, Kit, LogEntry } from "@/lib/game/types";
 import { timeBand } from "@/lib/game/types";
 import { cn } from "@/lib/utils";
 import { livingTellFromState, livingTellFrostsChrome } from "@/lib/game/living-plate";
@@ -72,6 +79,20 @@ function actionKey(choice: Choice) {
 
 function isUrgentBeat(state: GameState) {
   return Boolean(state.dead || state.skirmish || state.pendingRoll || state.activeEncounterId);
+}
+
+function journalStamp(entry: LogEntry, prev?: LogEntry) {
+  if (entry.daysSurvived == null && !entry.locationId) return null;
+  const same =
+    prev &&
+    prev.daysSurvived === entry.daysSurvived &&
+    prev.locationId === entry.locationId &&
+    prev.hour === entry.hour;
+  if (same) return null;
+  const day = entry.daysSurvived != null ? `Day ${entry.daysSurvived}` : null;
+  const when = entry.hour != null ? hourLabel(entry.hour) : null;
+  const here = entry.locationId ? placeName(entry.locationId) : null;
+  return [day, when, here].filter(Boolean).join(" · ");
 }
 
 function CrossfadePlate({
@@ -127,11 +148,11 @@ function Status({ state }: { state: GameState }) {
   const loc = LOCATION_BY_ID[state.locationId];
   const person = state.presentCharacterId ? CHARACTER_BY_ID[state.presentCharacterId] : null;
   const meters = [
-    ["Hunger", state.meters.hunger],
-    ["Thirst", state.meters.thirst],
-    ["Warmth", state.meters.warmth],
-    ["Energy", state.meters.energy],
-    ["Health", state.meters.health],
+    [METER_LABELS.hunger, state.meters.hunger],
+    [METER_LABELS.thirst, state.meters.thirst],
+    [METER_LABELS.warmth, state.meters.warmth],
+    [METER_LABELS.energy, state.meters.energy],
+    [METER_LABELS.health, state.meters.health],
   ] as const;
   return (
     <aside className="space-y-4 text-sm">
@@ -146,7 +167,7 @@ function Status({ state }: { state: GameState }) {
       </div>
       <div className="space-y-2">
         {meters.map(([label, value]) => (
-          <Meter key={label} label={label} value={value} warn={label === "Health" && value < 40} />
+          <Meter key={label} label={label} value={value} warn={label === METER_LABELS.health && value < 40} />
         ))}
       </div>
       <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-xs text-stone-300">
@@ -165,6 +186,7 @@ function Status({ state }: { state: GameState }) {
       <p className="text-xs text-stone-400">
         Eye {state.traits.eye} · Grit {state.traits.grit} · Savvy {state.traits.savvy} · Hands {state.traits.hands}
       </p>
+      <p className="text-[11px] leading-snug text-stone-500">{TRAIT_LINE}</p>
       {person && <p className="text-xs text-amber-100/80">Here: {person.name}</p>}
       {state.camp && (
         <p className="text-xs text-amber-100/70">
@@ -192,7 +214,36 @@ function Status({ state }: { state: GameState }) {
           ))}
         </div>
       )}
+      <CountryMap state={state} />
     </aside>
+  );
+}
+
+function CountryMap({ state }: { state: GameState }) {
+  const nodes = knownMap(state);
+  if (nodes.length === 0) return null;
+  return (
+    <div className="space-y-1.5 border-t border-white/10 pt-3">
+      <p className="text-[11px] tracking-[0.25em] text-amber-100/60 uppercase">Country</p>
+      <ul className="space-y-1 text-xs">
+        {nodes.map((n) => (
+          <li key={n.id}>
+            <p className={n.here ? "text-amber-100" : "text-stone-300"}>
+              {n.name}
+              {n.here ? " · here" : ""}
+              {n.camp ? " · camp" : ""}
+            </p>
+            {n.here && n.trails.length > 0 && (
+              <p className="pl-2 text-[11px] leading-snug text-stone-500">
+                {n.trails
+                  .map((t) => (t.known ? `${t.name} ${t.hours} hr` : t.trailName))
+                  .join(" · ")}
+              </p>
+            )}
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }
 
@@ -204,6 +255,7 @@ export function PlayScreen() {
   const [choiceHold, setChoiceHold] = useState(false);
   const [tendOpen, setTendOpen] = useState(false);
   const holdTimer = useRef<number>(0);
+  const journalEnd = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const existing = loadGame();
@@ -225,6 +277,10 @@ export function PlayScreen() {
   useEffect(() => {
     return () => window.clearTimeout(holdTimer.current);
   }, []);
+
+  useEffect(() => {
+    journalEnd.current?.scrollIntoView({ block: "end" });
+  }, [state?.log.length, state?.log.at(-1)?.id]);
 
   const choices = useMemo(() => (state ? getChoices(state) : []), [state]);
   const art = state ? artFor(state) : null;
@@ -272,7 +328,7 @@ export function PlayScreen() {
           <h1 className="font-heading text-4xl">Day {state.dead.daysSurvived}</h1>
           <p className="text-stone-200">{state.dead.detail}</p>
           <p className="text-sm text-stone-400">
-            {state.dead.cause} · {seasonLabel(state.dead.season)}
+            {deathCauseLabel(state.dead.cause)} · {placeName(state.dead.locationId)} · {seasonLabel(state.dead.season)}
           </p>
           <Button size="lg" onClick={() => router.push("/")}>
             Begin again
@@ -293,6 +349,8 @@ export function PlayScreen() {
   const showHero = idle ? hero : hero.filter((c) => c.action.type !== "travel");
   const atmosphere = timeAtmosphere(state, art.atmosphere);
   const tell = livingTellFromState(state);
+  const atCamp = Boolean(state.camp && state.camp.locationId === state.locationId);
+  const log = state.skirmish ? state.log.slice(-6) : state.log;
 
   return (
     <div className="relative min-h-dvh overflow-hidden text-stone-100" data-living-tell={tell}>
@@ -310,19 +368,27 @@ export function PlayScreen() {
               <img src={art.portrait} alt="" className="h-full w-full object-cover" />
             </div>
           )}
-          <div className="relative z-20 max-h-[40vh] space-y-3 overflow-y-auto rounded-lg bg-black/40 px-3 py-3 pr-2 text-[15px] leading-relaxed backdrop-blur-sm sm:max-h-[46vh] sm:text-base">
-            {(state.skirmish ? state.log.slice(-6) : state.log.slice(-2)).map((entry) => (
-              <div key={entry.id}>
-                <p>{entry.text}</p>
-                {entry.roll && (
-                  <p className={`mt-1 font-mono text-xs ${entry.roll.success ? "text-amber-200" : "text-red-300"}`}>
-                    d20 {entry.roll.d20} + {entry.roll.trait} {entry.roll.modifier}
-                    {entry.roll.penalty ? ` − ${entry.roll.penalty}` : ""} = {entry.roll.total} vs DC {entry.roll.dc}
-                    {entry.roll.success ? " · success" : " · fail"}
-                  </p>
-                )}
-              </div>
-            ))}
+          <div className="relative z-20 max-h-[38vh] space-y-3 overflow-y-auto rounded-lg bg-black/40 px-3 py-3 pr-2 text-[15px] leading-relaxed backdrop-blur-sm sm:max-h-[44vh] sm:text-base">
+            <p className="text-[11px] tracking-[0.25em] text-amber-100/60 uppercase">Journal</p>
+            {log.map((entry, i) => {
+              const stamp = journalStamp(entry, log[i - 1]);
+              return (
+                <div key={entry.id}>
+                  {stamp && (
+                    <p className="mb-1 text-[10px] tracking-[0.2em] text-amber-100/45 uppercase">{stamp}</p>
+                  )}
+                  <p>{entry.text}</p>
+                  {entry.roll && (
+                    <p className={`mt-1 font-mono text-xs ${entry.roll.success ? "text-amber-200" : "text-red-300"}`}>
+                      d20 {entry.roll.d20} + {entry.roll.trait} {entry.roll.modifier}
+                      {entry.roll.penalty ? ` − ${entry.roll.penalty}` : ""} = {entry.roll.total} vs DC {entry.roll.dc}
+                      {entry.roll.success ? " · success" : " · fail"}
+                    </p>
+                  )}
+                </div>
+              );
+            })}
+            <div ref={journalEnd} />
           </div>
           {state.pendingRoll ? (
             <FateDie
@@ -382,19 +448,19 @@ export function PlayScreen() {
               {idle && routine.length > 0 && (
                 <Sheet open={tendOpen} onOpenChange={setTendOpen}>
                   <SheetTrigger className="inline-flex h-8 items-center rounded-lg border border-white/20 bg-black/40 px-3 text-[0.8rem] tracking-[0.18em] text-amber-100/75 uppercase hover:border-amber-200/40 hover:text-amber-50">
-                    Tend camp
+                    {atCamp ? "Your camp" : "Tend camp"}
                   </SheetTrigger>
                   <SheetContent
                     side="bottom"
                     className="border-white/15 bg-black/92 text-stone-100 sm:max-w-none"
                   >
                     <SheetHeader>
-                      <SheetTitle className="text-amber-50">Tend camp</SheetTitle>
+                      <SheetTitle className="text-amber-50">{atCamp ? "Your camp" : "Tend camp"}</SheetTitle>
                       <SheetDescription className="text-stone-400">
-                        Small work. The mountain keeps the hours.
+                        {atCamp ? "The work of this ground." : "Small work. The mountain keeps the hours."}
                       </SheetDescription>
                     </SheetHeader>
-                    <div className="flex flex-wrap gap-2 px-4 pb-6">
+                    <div className={cn("flex flex-wrap gap-2 px-4 pb-6", atCamp && "sm:grid sm:grid-cols-2 sm:gap-2")}>
                       {routine.map((c) => (
                         <Button
                           key={c.id}
@@ -402,6 +468,7 @@ export function PlayScreen() {
                           variant="secondary"
                           disabled={c.disabled}
                           title={c.hint}
+                          className={atCamp && c.id === "camp-strike" ? "sm:col-span-2" : undefined}
                           onClick={() => act(c)}
                         >
                           {c.label}
@@ -412,12 +479,15 @@ export function PlayScreen() {
                 </Sheet>
               )}
               {travel.length > 0 && (
-                <div className="flex flex-wrap gap-2">
-                  {travel.map((c) => (
-                    <Button key={c.id} size="sm" variant="outline" title={c.hint} onClick={() => act(c)}>
-                      {c.label}
-                    </Button>
-                  ))}
+                <div className="space-y-2">
+                  <p className="text-[11px] tracking-[0.25em] text-amber-100/60 uppercase">Trails</p>
+                  <div className="flex flex-wrap gap-2">
+                    {travel.map((c) => (
+                      <Button key={c.id} size="sm" variant="outline" title={c.hint} onClick={() => act(c)}>
+                        {c.label}
+                      </Button>
+                    ))}
+                  </div>
                 </div>
               )}
             </div>

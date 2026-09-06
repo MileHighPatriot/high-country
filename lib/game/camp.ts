@@ -553,6 +553,7 @@ export function campMenuChoices(state: GameState, rng: () => number): { must: Ch
   const camp = state.camp;
 
   for (const job of readyJobs(camp)) {
+    if (job.kind === "dry-meat") continue;
     must.push({
       id: `collect-${job.id}`,
       label: jobLabel(job.kind, true),
@@ -589,19 +590,17 @@ export function campMenuChoices(state: GameState, rng: () => number): { must: Ch
     if (rng() < 0.75) good.push(a);
   }
 
-  const jobs: CampJobKind[] = ["dry-meat", "bank-coals", "set-snares", "smoke-hide"];
+  const jobs: CampJobKind[] = ["bank-coals", "set-snares", "smoke-hide"];
   for (const kind of jobs) {
     if (campHasJob(camp, kind)) continue;
     const can = canStartJob(state, kind);
     if (!can.ok) continue;
-    if (rng() < 0.4) {
-      good.push({
-        id: `job-${kind}`,
-        label: jobLabel(kind),
-        hint: `${jobHours(kind)} hours`,
-        action: { type: "startJob", kind },
-      });
-    }
+    good.push({
+      id: `job-${kind}`,
+      label: jobLabel(kind),
+      hint: `${jobHours(kind)} hours`,
+      action: { type: "startJob", kind },
+    });
   }
 
   const strike: Choice = {
