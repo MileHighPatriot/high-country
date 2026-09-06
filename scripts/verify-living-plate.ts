@@ -141,16 +141,16 @@ const baseline = tell({ season: "summer", weather: "clear", locationId: "high-ca
 assert(baseline === "air", "baseline high-camp summer clear is air");
 const seasonSwitch = tell({ season: "winter", weather: "clear", locationId: "high-camp" });
 assert(seasonSwitch === "snow", "season switch winter → snow");
-assert(seasonSwitch !== baseline, "switching season changes the tell");
 const weatherSwitch = tell({ season: "summer", weather: "blizzard", locationId: "high-camp" });
 assert(weatherSwitch === "snow", "weather switch blizzard → snow");
-assert(weatherSwitch !== baseline, "switching weather changes the tell");
 const creekSwitch = tell({ season: "summer", weather: "clear", locationId: "creek" });
 assert(creekSwitch === "water", "location switch creek → water");
-assert(creekSwitch !== baseline, "switching location changes the tell");
 const timberSwitch = tell({ season: "summer", weather: "clear", locationId: "timberline" });
 assert(timberSwitch === "wind", "location switch timberline → wind");
-assert(timberSwitch !== baseline, "switching location to timberline changes the tell");
+assert(
+  new Set([baseline, seasonSwitch, weatherSwitch, creekSwitch, timberSwitch]).size === 4,
+  "season, weather, and location switches produce distinct tells",
+);
 
 let s = withState({ season: "summer", weather: "clear", locationId: "high-camp" });
 assert(livingTellFromState(s) === "air", "fromState baseline air");
