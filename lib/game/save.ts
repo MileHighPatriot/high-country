@@ -15,6 +15,8 @@ export function loadGame(): GameState | null {
       camp: parsed.camp ?? null,
       memories: parsed.memories ?? {},
       openingId: parsed.openingId ?? "legacy",
+      skills: parsed.skills ?? {},
+      companionId: parsed.companionId ?? null,
     };
   } catch {
     return null;

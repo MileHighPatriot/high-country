@@ -7,6 +7,7 @@ import { SPRING_ENCOUNTERS } from "@/lib/game/content/encounters-spring";
 import { SUMMER_ENCOUNTERS } from "@/lib/game/content/encounters-summer";
 import { WINTER_ENCOUNTERS } from "@/lib/game/content/encounters-winter";
 import "@/lib/game/content/memory-nodes";
+import "@/lib/game/content/talk-trees";
 
 export { CHARACTERS, CHARACTER_BY_ID } from "@/lib/game/content/characters";
 export { LOCATIONS, LOCATION_BY_ID } from "@/lib/game/content/locations";
