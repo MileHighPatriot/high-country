@@ -43,6 +43,7 @@ import { arrivalParagraph, choreEncounter, choreKindFromId, forageOutcome, waitF
 import { allEncounters } from "@/lib/game/content/index";
 import { LOCATION_BY_ID } from "@/lib/game/content/locations";
 import { pickOpening } from "@/lib/game/content/openings";
+import { deathSentence, JOURNAL_KEEP, trailHours } from "@/lib/game/readout";
 import { withBase } from "@/lib/paths";
 import type {
   CampJob,
@@ -214,20 +215,25 @@ function decayHealth(meters: Meters) {
 
 function appendLog(state: GameState, text: string, roll?: RollResult): GameState {
   const entry: LogEntry = {
-    id: `${state.rngSeed}-${state.hour}-${text.length}-${roll ? "r" : "s"}`,
+    id: `${state.daysSurvived}-${state.dayOfYear}-${state.hour}-${state.log.length}-${state.rngSeed}-${roll ? "r" : "s"}`,
     text,
     roll,
+    dayOfYear: state.dayOfYear,
+    hour: state.hour,
+    locationId: state.locationId,
+    daysSurvived: state.daysSurvived,
   };
-  // Combat is a sequence of lines for one click; camp is one beat.
+  const log = [...state.log, entry];
   if (state.skirmish) {
-    return { ...state, log: [...state.log, entry].slice(-8) };
+    return { ...state, log: log.slice(-8) };
   }
-  const last = state.log[state.log.length - 1];
-  if (last) {
-    if (roll && !last.roll) return { ...state, log: [last, entry] };
-    if (!roll && last.roll) return { ...state, log: [last, entry] };
+  if (log.length <= JOURNAL_KEEP) return { ...state, log };
+  const opening = log[0];
+  const rest = log.slice(-(JOURNAL_KEEP - 1));
+  if (opening && rest[0]?.id !== opening.id) {
+    return { ...state, log: [opening, ...rest] };
   }
-  return { ...state, log: [entry] };
+  return { ...state, log: rest };
 }
 
 function rollPenalty(state: GameState): number {
@@ -543,33 +549,17 @@ function finalizeHealth(state: GameState, bite = true): GameState {
       meters,
       dead: {
         cause: named,
-        detail: deathCopy(named),
+        detail: deathSentence(named, state.locationId),
         daysSurvived: state.daysSurvived,
         season: state.season,
+        locationId: state.locationId,
       },
     };
   }
   return { ...state, meters };
 }
 
-function deathCopy(cause: DeathCause): string {
-  switch (cause) {
-    case "starvation":
-      return "You went hollow. The last thing you tasted was pine smoke and want.";
-    case "thirst":
-      return "Your tongue cracked. The creek was a rumor you could no longer reach.";
-    case "exposure":
-      return "The cold finished the work it started the first night you slept without a fire.";
-    case "exhaustion":
-      return "You sat down to rest and the mountain accepted the offering.";
-    case "violence":
-      return "Someone — or something — was quicker.";
-    case "accident":
-      return "Ice, rock, or bad luck. The mountain does not file reports.";
-    case "sickness":
-      return "Fever took the hours you needed to keep walking.";
-  }
-}
+
 
 function fireHoursLeft(state: GameState): number {
   if (state.campfireHours != null) return state.campfireHours;
@@ -1019,17 +1009,7 @@ function travel(state: GameState, to: LocationId): GameState {
   const loc = LOCATION_BY_ID[state.locationId];
   const edge = loc?.connections.find((c) => c.to === to);
   if (!edge) return appendLog(state, "There is no trail that way from here.");
-  let hours = edge.hours;
-  if (state.weather === "snow") hours += 1;
-  if (state.weather === "blizzard") hours += 2;
-  if (state.season === "winter") hours += 1;
-  if (state.hour < 6 || state.hour >= 20) hours += 1;
-  if (
-    state.inventory.extras.includes("snowshoes") &&
-    (state.season === "winter" || state.weather === "snow" || state.weather === "blizzard")
-  ) {
-    hours = Math.max(edge.hours, hours - 1);
-  }
+  const hours = trailHours(state, edge.hours);
   let next: GameState = {
     ...state,
     campfire: false,
@@ -1282,9 +1262,10 @@ function resolveSkirmish(state: GameState, move: SkirmishMove): GameState {
   if (next.dead) {
     next.dead = {
       cause: "violence",
-      detail: deathCopy("violence"),
+      detail: deathSentence("violence", next.locationId),
       daysSurvived: next.daysSurvived,
       season: next.season,
+      locationId: next.locationId,
     };
     next.skirmish = null;
   }
@@ -1989,8 +1970,11 @@ export function applyAction(state: GameState, action: GameAction): GameState {
       if (roll.success && (state.locationId === "wind-saddle" || state.locationId === "south-pass") && rng() < 0.3) {
         weather = state.season === "winter" ? "blizzard" : state.season === "summer" ? "storm" : "wind";
       }
+      const named = unlock ? LOCATION_BY_ID[unlock]?.name ?? unlock : null;
       next = applyOutcome(next, {
-        text: scoutCopy(state, roll.success),
+        text: named
+          ? `${scoutCopy(state, roll.success)} You can name ${named} from here.`
+          : scoutCopy(state, roll.success),
         hours: night ? 1 : 2,
         meters: { energy: -8 },
         unlockLocation: unlock,

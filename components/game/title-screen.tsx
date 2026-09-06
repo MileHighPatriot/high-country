@@ -6,13 +6,14 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { clearSave, loadBest, loadGame, loadLastDeath } from "@/lib/game/save";
 import type { DeathRecord, Kit } from "@/lib/game/types";
+import { deathCauseLabel, placeName, TRAIT_LINE } from "@/lib/game/readout";
 import { withBase } from "@/lib/paths";
 
 const KITS: { id: Kit; title: string; copy: string }[] = [
   {
     id: "rations",
     title: "Extra rations",
-    copy: "Four more days of flour and pemmican. Grit +1. Hunger waits.",
+    copy: "Four more days of flour and pemmican. Grit +1. Belly waits.",
   },
   {
     id: "powder",
@@ -75,12 +76,14 @@ export function TitleScreen() {
           You wintered too high. Spring is late. There is no town coming and no last day.
           Eat. Drink. Keep a fire. Meet who the mountain still allows. Live until you do not.
         </p>
+        <p className="text-xs tracking-wide text-stone-400">{TRAIT_LINE}</p>
         {best > 0 && (
           <p className="text-sm text-amber-100/80">Longest run: {best} days</p>
         )}
         {last && (
           <p className="text-sm text-stone-300/80">
-            Last death: day {last.daysSurvived}, {last.cause}. {last.detail}
+            Last death: day {last.daysSurvived}, {deathCauseLabel(last.cause)}
+            {last.locationId ? ` at ${placeName(last.locationId)}` : ""}. {last.detail}
           </p>
         )}
 

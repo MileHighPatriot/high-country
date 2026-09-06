@@ -129,6 +129,11 @@ export interface LogEntry {
   id: string;
   text: string;
   roll?: RollResult;
+  /** Missing on older saves — treat as unknown time/place. */
+  dayOfYear?: number;
+  hour?: number;
+  locationId?: LocationId;
+  daysSurvived?: number;
 }
 
 export interface SkirmishFoe {
@@ -155,6 +160,8 @@ export interface DeathRecord {
   detail: string;
   daysSurvived: number;
   season: Season;
+  /** Missing on older saves. */
+  locationId?: LocationId;
 }
 
 export interface GameState {

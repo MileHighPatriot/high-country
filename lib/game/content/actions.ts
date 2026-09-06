@@ -1,6 +1,7 @@
 import { accessibleCount, campMenuChoices } from "@/lib/game/camp";
 import { CHARACTER_BY_ID } from "@/lib/game/content/characters";
 import { LOCATION_BY_ID } from "@/lib/game/content/locations";
+import { trailChip } from "@/lib/game/readout";
 import type { Choice, GameState, LocationId, TimeBand, Weather } from "@/lib/game/types";
 import { timeBand } from "@/lib/game/types";
 
@@ -578,28 +579,11 @@ function scoutLabel(state: GameState, rng: () => number): string {
   return pick(rng, ["Read sign", "Scout the next ridge", "Walk a circle and look"]);
 }
 
-function travelLabel(state: GameState, to: LocationId, trailName: string, rng: () => number): string {
-  const dest = LOCATION_BY_ID[to];
-  const known = state.knownLocations.includes(to);
-  const band = timeBand(state.hour);
-  const hard = state.weather === "blizzard" || state.weather === "storm" || band === "night";
-  if (hard) {
-    if (to === "creek") return pick(rng, ["Feel down to the creek", "The water trail in this weather"]);
-    if (to === "wind-saddle") return pick(rng, ["The saddle in this wind", "Cross the saddle blind"]);
-    if (to === "high-camp") return pick(rng, ["Feel home to the lean-to", "Back to the bench in this weather"]);
-    if (to === "timberline") return pick(rng, ["Feel down to timber", "The switchback in the dark"]);
-    if (to === "abandoned-cabin") return pick(rng, ["Feel for the cabin", "The stove, if you can find it"]);
-    if (known) return pick(rng, [`Toward ${dest?.name ?? to}, careful`, `Feel for ${dest?.name ?? to}`]);
-    return pick(rng, [`Take ${trailName} anyway`, `The unknown trail in this weather`]);
-  }
-  if (state.camp && to === state.camp.locationId) {
-    return pick(rng, ["Back to your camp", "The trail home to your fire", "Back to the ring of stone"]);
-  }
-  if (to === "high-camp") return pick(rng, ["Back to the lean-to", "Home to high camp", trailName]);
-  if (known) {
-    return pick(rng, [`Toward ${dest?.name ?? to}`, `The trail to ${dest?.name ?? to}`, trailName]);
-  }
-  return `Take ${trailName}`;
+function travelLabel(
+  state: GameState,
+  edge: { to: LocationId; hours: number; trailName: string },
+): string {
+  return trailChip(state, edge);
 }
 
 function isHomeward(from: LocationId, to: LocationId, known: LocationId[], campAt?: LocationId | null): boolean {
@@ -918,8 +902,8 @@ export function campChoices(state: GameState): Choice[] {
 
   const travels = pickTravelEdges(state, rng).map((edge) => ({
     id: `go-${edge.to}`,
-    label: travelLabel(state, edge.to, edge.trailName, rng),
-    hint: `${edge.hours}+ hours`,
+    label: travelLabel(state, edge),
+    hint: edge.trailName,
     action: { type: "travel" as const, to: edge.to },
     tier: "travel" as const,
   }));
