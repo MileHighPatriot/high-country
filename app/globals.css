@@ -405,6 +405,7 @@
 }
 
 .hc-choices {
+  position: relative;
   transition: opacity 0.9s ease;
 }
 
@@ -523,6 +524,219 @@
 .hc-cinema-skip:hover {
   border-color: rgba(253, 230, 178, 0.55);
   color: #fffbeb;
+}
+
+/* Living plate — one cheap diegetic loop over still location art */
+.hc-live {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.hc-live-snow,
+.hc-live-fog,
+.hc-live-firelight,
+.hc-live-embers,
+.hc-live-sway,
+.hc-live-shimmer,
+.hc-live-mist,
+.hc-live-air {
+  position: absolute;
+  inset: -12%;
+  pointer-events: none;
+}
+
+.hc-live-snow-a {
+  background-image:
+    radial-gradient(1px 1px at 12% 18%, rgb(255 255 255 / 0.42), transparent),
+    radial-gradient(1.2px 1.2px at 38% 44%, rgb(255 255 255 / 0.28), transparent),
+    radial-gradient(1px 1px at 71% 22%, rgb(255 255 255 / 0.32), transparent),
+    radial-gradient(1.4px 1.4px at 88% 63%, rgb(255 255 255 / 0.22), transparent),
+    radial-gradient(1px 1px at 54% 81%, rgb(255 255 255 / 0.3), transparent);
+  background-size: 220px 180px;
+  opacity: 0.28;
+  animation: hc-live-drift 26s linear infinite;
+}
+
+.hc-live-snow-b {
+  background-image:
+    radial-gradient(1.1px 1.1px at 24% 8%, rgb(255 255 255 / 0.35), transparent),
+    radial-gradient(1px 1px at 62% 36%, rgb(255 255 255 / 0.2), transparent),
+    radial-gradient(1.3px 1.3px at 8% 72%, rgb(255 255 255 / 0.26), transparent);
+  background-size: 280px 240px;
+  opacity: 0.2;
+  animation: hc-live-drift 38s linear infinite reverse;
+}
+
+.hc-live-fog {
+  background: radial-gradient(ellipse 70% 40% at 40% 78%, rgb(226 232 240 / 0.16), transparent 70%);
+  opacity: 0.7;
+  animation: hc-live-fog 18s ease-in-out infinite;
+}
+
+.hc-live-firelight {
+  background: radial-gradient(ellipse 55% 38% at 48% 96%, rgb(255 132 48 / 0.2), transparent 62%);
+  mix-blend-mode: soft-light;
+  animation: hc-live-flicker 5.4s ease-in-out infinite;
+}
+
+.hc-live-embers {
+  background-image:
+    radial-gradient(1.2px 1.2px at 46% 88%, rgb(255 180 80 / 0.7), transparent),
+    radial-gradient(1px 1px at 52% 80%, rgb(255 120 40 / 0.55), transparent),
+    radial-gradient(1.1px 1.1px at 41% 92%, rgb(255 200 120 / 0.45), transparent),
+    radial-gradient(0.9px 0.9px at 58% 86%, rgb(255 90 30 / 0.4), transparent);
+  opacity: 0.45;
+  mix-blend-mode: screen;
+  animation: hc-live-embers 16s ease-in-out infinite;
+}
+
+.hc-live-sway {
+  top: auto;
+  right: -8%;
+  bottom: -8%;
+  left: -8%;
+  height: 48%;
+  background: linear-gradient(to top, rgb(186 200 150 / 0.1), transparent 70%);
+  transform-origin: 50% 100%;
+  animation: hc-live-sway 12s ease-in-out infinite;
+}
+
+.hc-live-shimmer {
+  background: linear-gradient(
+    118deg,
+    transparent 42%,
+    rgb(210 228 236 / 0.1) 50%,
+    transparent 58%
+  );
+  background-size: 220% 220%;
+  mix-blend-mode: soft-light;
+  animation: hc-live-shimmer 13s ease-in-out infinite;
+}
+
+.hc-live-mist {
+  background: radial-gradient(ellipse 60% 28% at 50% 72%, rgb(220 230 236 / 0.1), transparent 72%);
+  animation: hc-live-fog 20s ease-in-out infinite;
+}
+
+.hc-live-air {
+  background: radial-gradient(ellipse 50% 40% at 35% 28%, rgb(255 248 236 / 0.07), transparent 68%);
+  animation: hc-live-air 22s ease-in-out infinite;
+}
+
+.hc-choices.hc-live-frost {
+  box-shadow: inset 0 0 40px rgb(226 232 240 / 0.08);
+}
+
+.hc-choices.hc-live-frost::before {
+  content: "";
+  position: absolute;
+  inset: -12px -8px auto;
+  height: 2.2rem;
+  pointer-events: none;
+  background: linear-gradient(to bottom, rgb(226 232 240 / 0.07), transparent);
+  animation: hc-live-fog 16s ease-in-out infinite;
+}
+
+@keyframes hc-live-drift {
+  from {
+    transform: translate3d(-6%, 4%, 0);
+  }
+  to {
+    transform: translate3d(8%, -10%, 0);
+  }
+}
+
+@keyframes hc-live-fog {
+  0%,
+  100% {
+    opacity: 0.35;
+    transform: translate3d(-2%, 1%, 0) scale(1);
+  }
+  50% {
+    opacity: 0.7;
+    transform: translate3d(3%, -2%, 0) scale(1.04);
+  }
+}
+
+@keyframes hc-live-flicker {
+  0%,
+  100% {
+    opacity: 0.55;
+  }
+  18% {
+    opacity: 0.72;
+  }
+  31% {
+    opacity: 0.48;
+  }
+  54% {
+    opacity: 0.8;
+  }
+  73% {
+    opacity: 0.5;
+  }
+}
+
+@keyframes hc-live-embers {
+  0% {
+    transform: translate3d(0, 4%, 0);
+    opacity: 0.25;
+  }
+  40% {
+    transform: translate3d(-2%, -8%, 0);
+    opacity: 0.5;
+  }
+  100% {
+    transform: translate3d(3%, -16%, 0);
+    opacity: 0.15;
+  }
+}
+
+@keyframes hc-live-sway {
+  0%,
+  100% {
+    transform: skewX(-1.1deg) translate3d(-0.6%, 0, 0);
+  }
+  50% {
+    transform: skewX(1.3deg) translate3d(0.8%, 0, 0);
+  }
+}
+
+@keyframes hc-live-shimmer {
+  0%,
+  100% {
+    background-position: 10% 40%;
+    opacity: 0.45;
+  }
+  50% {
+    background-position: 80% 55%;
+    opacity: 0.75;
+  }
+}
+
+@keyframes hc-live-air {
+  0%,
+  100% {
+    transform: translate3d(-2%, 1%, 0);
+    opacity: 0.4;
+  }
+  50% {
+    transform: translate3d(3%, -2%, 0);
+    opacity: 0.75;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hc-live {
+    display: none;
+  }
+
+  .hc-choices.hc-live-frost::before {
+    display: none;
+  }
 }
 
 @keyframes fate-tumble {
