@@ -200,8 +200,18 @@ export interface GameState {
   skills?: Partial<Record<"ice" | "sign" | "hide" | "rifle" | "camp", number>>;
   /** Walks or sits with you until they part. Missing on older saves. */
   companionId?: CharacterId | null;
+  /** Waiting is a scene on the plate. Missing on older saves. */
+  waitScene?: WaitScene | null;
   dead: DeathRecord | null;
   rngSeed: number;
+}
+
+export interface WaitScene {
+  hours: number;
+  fromHour: number;
+  fireLit: boolean;
+  fireDies: boolean;
+  arrivalId: CharacterId | null;
 }
 
 export type SkirmishMove = "fire" | "close" | "cover" | "item" | "flee";
@@ -213,6 +223,7 @@ export type GameAction =
   | { type: "sleep" }
   | { type: "search" }
   | { type: "wait" }
+  | { type: "finishWait" }
   | { type: "talk" }
   | { type: "makeFire" }
   | { type: "gatherWater" }

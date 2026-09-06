@@ -79,7 +79,9 @@ function actionKey(choice: Choice) {
 }
 
 function isUrgentBeat(state: GameState) {
-  return Boolean(state.dead || state.skirmish || state.pendingRoll || state.activeEncounterId);
+  return Boolean(
+    state.dead || state.skirmish || state.pendingRoll || state.activeEncounterId || state.waitScene,
+  );
 }
 
 function journalStamp(entry: LogEntry, prev?: LogEntry) {
@@ -226,56 +228,169 @@ function Status({ state }: { state: GameState }) {
   );
 }
 
-function plateHits(state: GameState, choices: Choice[]): Array<Choice & { x: number; y: number; kind: string }> {
-  const hits: Array<Choice & { x: number; y: number; kind: string }> = [];
-  const take = (kind: string, x: number, y: number, pred: (c: Choice) => boolean) => {
-    const c = choices.find(pred);
-    if (c && !hits.some((h) => h.id === c.id)) hits.push({ ...c, x, y, kind });
-  };
-  take("figure", 22, 38, (c) => c.action.type === "talk");
-  take(
-    "fire",
-    48,
-    62,
-    (c) => c.action.type === "makeFire" || c.action.type === "tendFire" || c.id === "camp-fire",
-  );
-  take("water", 18, 70, (c) => c.action.type === "gatherWater");
-  take("wood", 78, 64, (c) => c.action.type === "gatherWood" || c.id === "camp-wood");
-  const trails = choices.filter((c) => c.action.type === "travel");
-  trails.slice(0, 3).forEach((c, i) => {
-    const x = trails.length === 1 ? 50 : trails.length === 2 ? [28, 72][i]! : [18, 50, 82][i]!;
-    hits.push({ ...c, x, y: 84, kind: "trail" });
-  });
-  return hits;
+function findChoice(choices: Choice[], pred: (c: Choice) => boolean) {
+  return choices.find(pred);
 }
 
-function PlateHits({
+function CampStage({
   state,
   choices,
+  waiting,
   onAct,
 }: {
   state: GameState;
   choices: Choice[];
+  waiting: boolean;
   onAct: (c: Choice) => void;
 }) {
-  const hits = plateHits(state, choices);
-  if (hits.length === 0) return null;
+  const atCamp = Boolean(state.camp && state.camp.locationId === state.locationId);
+  const scene = state.waitScene;
+  const personId = state.presentCharacterId ?? (waiting ? scene?.arrivalId : null) ?? null;
+  const person = personId ? CHARACTER_BY_ID[personId] : null;
+  const talk = findChoice(choices, (c) => c.action.type === "talk");
+  const fireChoice = findChoice(
+    choices,
+    (c) => c.action.type === "makeFire" || c.action.type === "tendFire" || c.id === "camp-fire",
+  );
+  const woodChoice = findChoice(choices, (c) => c.action.type === "gatherWood" || c.id === "camp-wood");
+  const leanChoice = findChoice(choices, (c) => c.id === "camp-lean" || (c.action.type === "build" && c.action.piece === "leanTo"));
+  const waterChoice = findChoice(choices, (c) => c.action.type === "gatherWater");
+  const trails = choices.filter((c) => c.action.type === "travel").slice(0, 3);
+  const showLean = atCamp && (state.camp?.leanTo || leanChoice);
+  const showPile = atCamp && (state.camp?.woodpile || woodChoice);
+  const showFire = state.campfire || (atCamp && (state.camp?.fireRing || fireChoice));
+  const fireDying = waiting && scene?.fireDies;
+  const arrivalIn = waiting && scene?.arrivalId && !state.presentCharacterId;
+
   return (
     <div className="pointer-events-none absolute inset-0 z-[8]">
-      {hits.map((h) => (
+      {showLean && (
         <button
-          key={`plate-${h.id}`}
           type="button"
-          disabled={h.disabled}
-          title={h.hint ?? h.label}
-          onClick={() => onAct(h)}
-          className="hc-plate-hit pointer-events-auto absolute -translate-x-1/2 -translate-y-1/2"
-          style={{ left: `${h.x}%`, top: `${h.y}%` }}
+          className="hc-camp-piece pointer-events-auto"
+          style={{ left: "6%", bottom: "14%", width: "min(42vw, 28rem)" }}
+          disabled={!leanChoice || waiting}
+          onClick={() => leanChoice && onAct(leanChoice)}
         >
-          <span className="hc-plate-hit-dot" data-kind={h.kind} />
-          <span className="hc-plate-hit-label">{h.label}</span>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src={withBase("/art/camp/lean-to.png")} alt="" className={cn("hc-camp-img", !state.camp?.leanTo && "hc-camp-ghost")} />
+          <span className="hc-camp-name">{leanChoice?.label ?? "Lean-to"}</span>
         </button>
-      ))}
+      )}
+      {showFire && (
+        <button
+          type="button"
+          className={cn("hc-camp-piece pointer-events-auto", fireDying && "hc-fire-dying")}
+          style={{ left: "38%", bottom: "10%", width: "min(28vw, 16rem)" }}
+          disabled={!fireChoice || waiting}
+          onClick={() => fireChoice && onAct(fireChoice)}
+        >
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src={withBase("/art/camp/fire.png")} alt="" className="hc-camp-img hc-camp-fire" />
+          <span className="hc-camp-name">{fireChoice?.label ?? (state.campfire ? "Fire" : "Fire ring")}</span>
+        </button>
+      )}
+      {showPile && (
+        <button
+          type="button"
+          className="hc-camp-piece pointer-events-auto"
+          style={{ left: "62%", bottom: "12%", width: "min(32vw, 18rem)" }}
+          disabled={!woodChoice || waiting}
+          onClick={() => woodChoice && onAct(woodChoice)}
+        >
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src={withBase("/art/camp/woodpile.png")} alt="" className={cn("hc-camp-img", !state.camp?.woodpile && "hc-camp-ghost")} />
+          <span className="hc-camp-name">{woodChoice?.label ?? "Woodpile"}</span>
+        </button>
+      )}
+      {person?.art && (
+        <button
+          type="button"
+          className={cn("hc-camp-figure pointer-events-auto", arrivalIn && "hc-figure-in")}
+          style={{ left: "3%", bottom: "22%" }}
+          disabled={!talk || waiting}
+          onClick={() => talk && onAct(talk)}
+        >
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src={withBase(person.art)} alt="" />
+          <span className="hc-camp-name">{person.name}</span>
+        </button>
+      )}
+      {waterChoice && (
+        <button
+          type="button"
+          className="hc-camp-hit pointer-events-auto"
+          style={{ left: "16%", bottom: "8%" }}
+          disabled={waterChoice.disabled || waiting}
+          onClick={() => onAct(waterChoice)}
+        >
+          {waterChoice.label}
+        </button>
+      )}
+      {!waiting &&
+        trails.map((c, i) => (
+          <button
+            key={c.id}
+            type="button"
+            className="hc-camp-hit pointer-events-auto"
+            style={{ left: `${18 + i * 28}%`, bottom: "3%" }}
+            disabled={c.disabled}
+            onClick={() => onAct(c)}
+          >
+            {c.label}
+          </button>
+        ))}
+    </div>
+  );
+}
+
+function WaitPlay({
+  scene,
+  onDone,
+}: {
+  scene: NonNullable<GameState["waitScene"]>;
+  onDone: () => void;
+}) {
+  const [phase, setPhase] = useState<"light" | "fire" | "arrival">("light");
+  const done = useRef(false);
+
+  const onDoneRef = useRef(onDone);
+  onDoneRef.current = onDone;
+
+  useEffect(() => {
+    const steps: Array<"light" | "fire" | "arrival"> = ["light"];
+    if (scene.fireLit) steps.push("fire");
+    if (scene.arrivalId) steps.push("arrival");
+    let i = 0;
+    const tick = window.setInterval(() => {
+      i += 1;
+      if (i >= steps.length) {
+        window.clearInterval(tick);
+        if (!done.current) {
+          done.current = true;
+          onDoneRef.current();
+        }
+        return;
+      }
+      setPhase(steps[i]!);
+    }, 2300);
+    return () => window.clearInterval(tick);
+  }, [scene]);
+
+  const line =
+    phase === "light"
+      ? "The light changes."
+      : phase === "fire"
+        ? scene.fireDies
+          ? "The coals go thin."
+          : "The fire holds."
+        : CHARACTER_BY_ID[scene.arrivalId ?? ""]?.name
+          ? `${CHARACTER_BY_ID[scene.arrivalId!]?.name} is on the ground now.`
+          : "Someone uses the hour.";
+
+  return (
+    <div className="pointer-events-none absolute inset-x-0 bottom-[38%] z-[9] flex justify-center px-4">
+      <p className="rounded-md bg-black/55 px-4 py-2 text-sm tracking-wide text-amber-100/90">{line}</p>
     </div>
   );
 }
@@ -357,12 +472,7 @@ export function PlayScreen() {
       setTendOpen(false);
       return;
     }
-    if (action.type === "wait" && !isUrgentBeat(next) && !next.dead) {
-      setChoiceHold(true);
-      holdTimer.current = window.setTimeout(() => setChoiceHold(false), 2600);
-    } else {
-      setChoiceHold(false);
-    }
+    setChoiceHold(false);
   }
 
   function act(choice: Choice) {
@@ -405,7 +515,17 @@ export function PlayScreen() {
   const travel = choices.filter((c) => choiceTier(c) === "travel" || c.action.type === "travel");
   const routineFromChoices = choices.filter((c) => choiceTier(c) === "routine");
   const routineSpots = spots.filter((s) => s.action.type !== "pitchCamp" && !knownKeys.has(actionKey(s)));
-  const routine = [...routineFromChoices, ...routineSpots];
+  const onPlate = (c: Choice) =>
+    c.action.type === "talk" ||
+    c.action.type === "makeFire" ||
+    c.action.type === "tendFire" ||
+    c.action.type === "gatherWood" ||
+    c.action.type === "gatherWater" ||
+    c.action.type === "travel" ||
+    c.id === "camp-fire" ||
+    c.id === "camp-wood" ||
+    c.id === "camp-lean";
+  const routine = [...routineFromChoices, ...routineSpots].filter((c) => !onPlate(c));
   const idle = !isUrgentBeat(state);
   const showHero = idle ? hero : hero.filter((c) => c.action.type !== "travel");
   const atmosphere = timeAtmosphere(state, art.atmosphere);
@@ -415,7 +535,10 @@ export function PlayScreen() {
 
   return (
     <div
-      className={cn("relative min-h-dvh overflow-hidden text-stone-100", choiceHold && "hc-hour-play")}
+      className={cn(
+        "relative min-h-dvh overflow-hidden text-stone-100",
+        (choiceHold || state.waitScene) && "hc-hour-play",
+      )}
       data-living-tell={tell}
     >
       <CrossfadePlate src={art.location} ken />
@@ -423,11 +546,14 @@ export function PlayScreen() {
       <div className={`absolute inset-0 transition-colors duration-[1800ms] ${timeGrade(state.hour)}`} />
       <LivingPlate tell={tell} />
       <div className="absolute inset-0 bg-gradient-to-t from-black via-black/55 to-black/25" />
-      {idle && !state.pendingRoll && <PlateHits state={state} choices={choices} onAct={act} />}
+      <CampStage state={state} choices={choices} waiting={Boolean(state.waitScene)} onAct={act} />
+      {state.waitScene && (
+        <WaitPlay scene={state.waitScene} onDone={() => commit(state, { type: "finishWait" })} />
+      )}
 
       <div className="relative z-10 mx-auto grid min-h-dvh max-w-6xl gap-6 px-4 py-4 lg:grid-cols-[1fr_280px] lg:items-end">
         <div className="relative flex flex-col justify-end gap-4 pb-4">
-          {art.portrait && (
+          {art.portrait && !state.presentCharacterId && !state.waitScene?.arrivalId && (
             <div className="h-40 w-28 overflow-hidden rounded-md border border-white/20 shadow-lg sm:h-52 sm:w-36">
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img src={art.portrait} alt="" className="h-full w-full object-cover" />
@@ -455,7 +581,7 @@ export function PlayScreen() {
             })}
             <div ref={journalEnd} />
           </div>
-          {state.pendingRoll ? (
+          {state.waitScene ? null : state.pendingRoll ? (
             <FateDie
               pending={state.pendingRoll}
               retreats={showHero}
@@ -497,7 +623,19 @@ export function PlayScreen() {
                     </Button>
                   ))}
               <div className="flex flex-wrap gap-2">
-                {(idle ? showHero.filter((c) => c.action.type !== "wait") : showHero).map((c) => (
+                {(idle
+                  ? showHero.filter(
+                      (c) =>
+                        c.action.type !== "wait" &&
+                        c.action.type !== "talk" &&
+                        c.action.type !== "travel" &&
+                        c.action.type !== "gatherWater" &&
+                        c.action.type !== "gatherWood" &&
+                        c.action.type !== "makeFire" &&
+                        c.action.type !== "tendFire",
+                    )
+                  : showHero
+                ).map((c) => (
                   <Button
                     key={c.id}
                     size={idle ? "default" : "lg"}
@@ -544,16 +682,7 @@ export function PlayScreen() {
                 </Sheet>
               )}
               {travel.length > 0 && (
-                <div className="space-y-2">
-                  <p className="text-[11px] tracking-[0.25em] text-amber-100/60 uppercase">Trails</p>
-                  <div className="flex flex-wrap gap-2">
-                    {travel.map((c) => (
-                      <Button key={c.id} size="sm" variant="outline" title={c.hint} onClick={() => act(c)}>
-                        {c.label}
-                      </Button>
-                    ))}
-                  </div>
-                </div>
+                <p className="text-[11px] text-stone-500">Trails sit on the ground. Click them there.</p>
               )}
             </div>
           )}

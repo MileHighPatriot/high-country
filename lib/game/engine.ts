@@ -71,6 +71,7 @@ import type {
   SkirmishFoe,
   SkirmishMove,
   Trait,
+  WaitScene,
   Weather,
 } from "@/lib/game/types";
 import { DAYS_PER_SEASON, DAYS_PER_YEAR, METER_MAX, timeBand } from "@/lib/game/types";
@@ -777,26 +778,29 @@ function smokeVisitorPool(state: GameState) {
   });
 }
 
+const CORE_PEOPLE = new Set(["eliza-ward", "silas-crowe", "two-crows"]);
+
 function maybePresentCharacter(state: GameState, opts?: { smoke?: boolean }): GameState {
   const smokePull = Boolean(opts?.smoke || (atOwnCamp(state) && (state.camp?.smoke ?? 0) >= 2));
   const onHours = presentPeople(state);
-  const offHours = presentPeople(state, { ignoreHours: true }).filter((c) => !inHours(c, state.hour));
+  const coreHere = onHours.filter((c) => CORE_PEOPLE.has(c.id));
+  const othersHere = onHours.filter((c) => !CORE_PEOPLE.has(c.id));
   const rng = mulberry32(state.rngSeed + 99);
   let nextSeeded: GameState = { ...state, rngSeed: nextSeed(state.rngSeed) };
 
-  if (onHours.length && rng() < 0.65) {
-    const pick = onHours[Math.floor(rng() * onHours.length)]!;
+  if (coreHere.length && rng() < 0.58) {
+    const pick = coreHere[Math.floor(rng() * coreHere.length)]!;
     return { ...nextSeeded, presentCharacterId: pick.id };
   }
   if (smokePull) {
-    const pool = smokeVisitorPool(state);
-    if (pool.length && rng() < 0.45) {
+    const pool = smokeVisitorPool(state).filter((c) => CORE_PEOPLE.has(c.id));
+    if (pool.length && rng() < 0.4) {
       const pick = pool[Math.floor(rng() * pool.length)]!;
       return { ...nextSeeded, presentCharacterId: pick.id };
     }
   }
-  if (offHours.length && rng() < 0.04) {
-    const pick = offHours[Math.floor(rng() * offHours.length)]!;
+  if (othersHere.length && rng() < 0.08) {
+    const pick = othersHere[Math.floor(rng() * othersHere.length)]!;
     return { ...nextSeeded, presentCharacterId: pick.id };
   }
   return { ...nextSeeded, presentCharacterId: null };
@@ -951,6 +955,7 @@ export function createGame(name: string, kit: Kit): GameState {
     openingId: opening.id,
     skills: {},
     companionId: null,
+    waitScene: null,
     dead: null,
     rngSeed: nextSeed(seed),
   };
@@ -1358,6 +1363,57 @@ function CLAIMED_HERE(id: LocationId) {
   );
 }
 
+function beginWait(state: GameState): GameState {
+  if (state.waitScene) return state;
+  const hours = waitHours(state);
+  const rng = mulberry32(state.rngSeed);
+  let arrivalId: CharacterId | null = null;
+  if (!state.companionId && !state.presentCharacterId && rng() < 0.45) {
+    const here = presentPeople(state);
+    const core = here.filter((c) => CORE_PEOPLE.has(c.id));
+    const pool = core.length ? core : rng() < 0.12 ? here : [];
+    if (pool.length) arrivalId = pool[Math.floor(rng() * pool.length)]!.id;
+  }
+  const scene: WaitScene = {
+    hours,
+    fromHour: state.hour,
+    fireLit: state.campfire,
+    fireDies: state.campfire && fireHoursLeft(state) <= hours,
+    arrivalId,
+  };
+  return { ...state, rngSeed: nextSeed(state.rngSeed), waitScene: scene };
+}
+
+function finishWait(state: GameState): GameState {
+  const scene = state.waitScene;
+  if (!scene) return state;
+  let next: GameState = { ...state, waitScene: null };
+  next = advanceTime(next, scene.hours);
+  if (next.dead) return appendLog(next, "You wait. The weather finishes the sentence.");
+  const rng = mulberry32(next.rngSeed);
+  next = { ...next, rngSeed: nextSeed(next.rngSeed) };
+  if (state.weather === "wind" && rng() < 0.22) next.weather = "clear";
+  else if (state.weather === "storm" && rng() < 0.18) next.weather = "wind";
+  else if (state.weather === "clear" && rng() < 0.08) next.weather = pickWeather(next.season, rng);
+  next = appendLog(next, waitFlavor(next));
+  if (state.companionId) {
+    next.companionId = state.companionId;
+    next.presentCharacterId = state.companionId;
+  } else if (scene.arrivalId) {
+    next.presentCharacterId = scene.arrivalId;
+    const name = CHARACTER_BY_ID[scene.arrivalId]?.name;
+    if (name) next = appendLog(next, `${name} walks into the hour without asking.`);
+  }
+  if (scene.fireDies) {
+    next = appendLog(next, "The fire goes to a rumor of coal.");
+  }
+  const enc = pickEncounter(next, "wait");
+  if (isUniqueStory(enc) && rng() < 0.18) {
+    return beginEncounter(next, enc);
+  }
+  return next;
+}
+
 function withPractice(state: GameState, id: "ice" | "sign" | "hide" | "rifle" | "camp", ok: boolean): GameState {
   if (!ok) return state;
   const practiced = practiceSkill(state, id);
@@ -1759,6 +1815,7 @@ function collectCampJob(state: GameState, id: string): GameState {
 
 export function applyAction(state: GameState, action: GameAction): GameState {
   if (state.dead) return state;
+  if (state.waitScene && action.type !== "finishWait") return state;
   if (state.skirmish && action.type !== "skirmish") return state;
   if (state.pendingRoll) {
     const resumeType = state.pendingRoll.resume?.type;
@@ -1947,33 +2004,10 @@ export function applyAction(state: GameState, action: GameAction): GameState {
         withLeftoverNote("You break dead limbs until your shoulders argue. Two armfuls.", gained.note),
       );
     }
-    case "wait": {
-      const hours = waitHours(state);
-      let next = advanceTime(state, hours);
-      if (next.dead) return appendLog(next, "You wait. The weather finishes the sentence.");
-      const rng = mulberry32(next.rngSeed);
-      next = { ...next, rngSeed: nextSeed(next.rngSeed) };
-      if (state.weather === "wind" && rng() < 0.22) next.weather = "clear";
-      else if (state.weather === "storm" && rng() < 0.18) next.weather = "wind";
-      else if (state.weather === "clear" && rng() < 0.08) next.weather = pickWeather(next.season, rng);
-      const flavor = waitFlavor(next);
-      next = appendLog(next, flavor);
-      if (state.companionId) {
-        next.companionId = state.companionId;
-        next.presentCharacterId = state.companionId;
-      } else if (!next.presentCharacterId && rng() < 0.38) {
-        next = maybePresentCharacter(next);
-        if (next.presentCharacterId) {
-          const name = CHARACTER_BY_ID[next.presentCharacterId]?.name;
-          if (name) next = appendLog(next, `${name} walks into the hour without asking.`);
-        }
-      }
-      const enc = pickEncounter(next, "wait");
-      if (isUniqueStory(enc) && rng() < 0.22) {
-        return beginEncounter(next, enc);
-      }
-      return next;
-    }
+    case "wait":
+      return beginWait(state);
+    case "finishWait":
+      return finishWait(state);
     case "restWatch": {
       const hours = 1 + (mulberry32(state.rngSeed)() < 0.4 ? 1 : 0);
       let next = advanceTime({ ...state, rngSeed: nextSeed(state.rngSeed) }, hours);
@@ -2218,6 +2252,7 @@ function asHero(choice: Choice): Choice {
 
 export function getChoices(state: GameState): Choice[] {
   if (state.dead) return [];
+  if (state.waitScene) return [];
   if (state.skirmish) {
     return [
       asHero({ id: "fire", label: "Aim / fire", hint: "Eye, costs powder", action: { type: "skirmish", move: "fire" } }),
