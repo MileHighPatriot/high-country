@@ -17,6 +17,7 @@ export function loadGame(): GameState | null {
       openingId: parsed.openingId ?? "legacy",
       skills: parsed.skills ?? {},
       companionId: parsed.companionId ?? null,
+      waitScene: parsed.waitScene ?? null,
     };
   } catch {
     return null;

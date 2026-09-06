@@ -1,4 +1,4 @@
-import { CHARACTERS, CHARACTER_BY_ID } from "@/lib/game/content/characters";
+import { CHARACTER_BY_ID } from "@/lib/game/content/characters";
 import type { DialogueNode } from "@/lib/game/types";
 
 function add(id: string, node: DialogueNode) {
@@ -248,27 +248,39 @@ export function installTalkTrees() {
     ],
   });
 
-  for (const person of CHARACTERS) {
-    add(person.id, {
-      id: `${person.id}-linger`,
+  for (const id of ["eliza-ward", "silas-crowe", "two-crows"] as const) {
+    const person = CHARACTER_BY_ID[id];
+    if (!person) continue;
+    add(id, {
+      id: `${id}-linger`,
       repeatable: true,
-      text: `${person.name} is still on this ground. ${person.blurb} The hour has not dismissed them.`,
+      text: `${person.name} is still here. Not a visit. A person using the same air. ${person.blurb}`,
       choices: [
         {
           id: "ask",
-          label: "Ask what this ground is doing",
+          label: "Ask what they are actually doing on this ground",
           outcome: {
-            text: `${person.name} tells you a true thing and a useful thing and does not label which is which. You file both.`,
+            text:
+              id === "eliza-ward"
+                ? "“Keeping a stove that does not belong to the pass.” She wipes a tin. “You can help or you can be weather.”"
+                : id === "silas-crowe"
+                  ? "“Wasting a cup on a man who might die interesting.” He toasts the ridge. “Don’t make me bury a dull one.”"
+                  : "“Hunting. You are delaying. Different work, same mountain.” He does not smile at the distinction.",
             hours: 1,
-            standing: { id: person.id, delta: 1 },
+            standing: { id, delta: 1 },
             invite: "stay",
           },
         },
         {
           id: "walk",
-          label: `Ask ${person.name.split(" ")[0]} to walk the next trail`,
+          label: "Ask them to walk the next trail",
           outcome: {
-            text: `They consider the trail as if it had insulted them, then start walking. You are included until you are not.`,
+            text:
+              id === "two-crows"
+                ? "He is already walking. You are included until the wallows, or until you talk too much."
+                : id === "eliza-ward"
+                  ? "“As far as timberline. Then I have a door to keep.” She takes the pistol without making a speech of it."
+                  : "“Until I remember I drink alone.” He starts. The cup comes too.",
             hours: 1,
             invite: "walk",
           },
