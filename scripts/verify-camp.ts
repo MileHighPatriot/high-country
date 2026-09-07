@@ -192,7 +192,7 @@ for (let i = 0; i < 40; i++) {
   if (n.presentCharacterId === "eliza-ward") nightHits += 1;
 }
 console.log("eliza at ~2am after travel", nightHits, "/40");
-assert(nightHits <= 6, `Eliza should almost never show at night without smoke, got ${nightHits}/40`);
+assert(nightHits >= 8, `Eliza lives in the cabin, so night travel should often find her home, got ${nightHits}/40`);
 
 function packHonestyState(): GameState {
   return {

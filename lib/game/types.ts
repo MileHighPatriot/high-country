@@ -25,6 +25,8 @@ export type EncounterTrigger =
 export type CampPiece = "leanTo" | "fireRing" | "woodpile" | "cachePit" | "dryingRack" | "pot";
 export type CampStowItem = "rations" | "water" | "firewood" | "pelts" | "powder";
 export type CampJobKind = "dry-meat" | "bank-coals" | "set-snares" | "smoke-hide";
+export type PersonNeed = "food" | "warmth" | "trade" | "shelter" | "news" | "company";
+export type PersonMood = "even" | "wary" | "friendly" | "desperate" | "angry";
 
 export interface CampCache {
   rations: number;
@@ -202,8 +204,28 @@ export interface GameState {
   companionId?: CharacterId | null;
   /** Waiting is a scene on the plate. Missing on older saves. */
   waitScene?: WaitScene | null;
+  /** Living people on the range. Missing on older saves — seed from CharacterDef homes. */
+  world?: WorldState | null;
   dead: DeathRecord | null;
   rngSeed: number;
+}
+
+export interface PersonLife {
+  id: CharacterId;
+  locationId: LocationId;
+  headingTo: LocationId | null;
+  hoursLeft: number;
+  need: PersonNeed | null;
+  mood: PersonMood;
+  errand: string | null;
+  /** Trail stranger, not a portrait regular. */
+  generated?: boolean;
+}
+
+export interface WorldState {
+  people: Record<CharacterId, PersonLife>;
+  rumors: string[];
+  lastSceneId?: string;
 }
 
 export interface WaitScene {
@@ -253,7 +275,8 @@ export type GameAction =
   | { type: "castDie" }
   | { type: "finishDie" }
   | { type: "cancelDie" }
-  | { type: "skirmish"; move: SkirmishMove };
+  | { type: "skirmish"; move: SkirmishMove }
+  | { type: "attempt"; text: string };
 
 export interface Choice {
   id: string;

@@ -1,10 +1,22 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { clearSave, loadBest, loadGame, loadLastDeath } from "@/lib/game/save";
+import {
+  campaignLine,
+  clearSave,
+  exportFilename,
+  loadBest,
+  loadCampaignMeta,
+  loadGame,
+  loadLastDeath,
+  parseGame,
+  saveGame,
+  serializeGame,
+  type CampaignMeta,
+} from "@/lib/game/save";
 import type { DeathRecord, Kit } from "@/lib/game/types";
 import { deathCauseLabel, placeName, TRAIT_LINE } from "@/lib/game/readout";
 import { withBase } from "@/lib/paths";
@@ -44,23 +56,74 @@ const KITS: { id: Kit; title: string; copy: string }[] = [
 
 export function TitleScreen() {
   const router = useRouter();
+  const fileRef = useRef<HTMLInputElement>(null);
   const [name, setName] = useState("Ward");
   const [kit, setKit] = useState<Kit>("coat");
-  const [hasSave, setHasSave] = useState(false);
+  const [meta, setMeta] = useState<CampaignMeta | null>(null);
   const [best, setBest] = useState(0);
   const [last, setLast] = useState<DeathRecord | null>(null);
+  const [confirmNew, setConfirmNew] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
-  useEffect(() => {
-    setHasSave(!!loadGame());
+  function refresh() {
+    setMeta(loadCampaignMeta());
     setBest(loadBest());
     setLast(loadLastDeath());
+  }
+
+  useEffect(() => {
+    refresh();
   }, []);
 
-  function start() {
+  function continueRun() {
+    router.push("/play");
+  }
+
+  function startFresh() {
     clearSave();
     const params = new URLSearchParams({ name: name.trim() || "Trapper", kit });
     router.push(`/play?${params.toString()}`);
   }
+
+  function onNewWalk() {
+    if (meta && !confirmNew) {
+      setConfirmNew(true);
+      return;
+    }
+    startFresh();
+  }
+
+  function downloadRun() {
+    const game = loadGame();
+    if (!game) return;
+    const blob = new Blob([serializeGame(game)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = exportFilename(game);
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  function onPickFile(file: File | undefined) {
+    if (!file) return;
+    setLoadError(null);
+    const reader = new FileReader();
+    reader.onload = () => {
+      const raw = typeof reader.result === "string" ? reader.result : "";
+      const game = parseGame(raw);
+      if (!game) {
+        setLoadError("That file is not a live High Country run.");
+        return;
+      }
+      saveGame(game);
+      setConfirmNew(false);
+      refresh();
+    };
+    reader.readAsText(file);
+  }
+
+  const hasSave = Boolean(meta);
 
   return (
     <div className="relative min-h-dvh overflow-hidden text-stone-100">
@@ -87,7 +150,31 @@ export function TitleScreen() {
           </p>
         )}
 
+        {hasSave && meta && (
+          <div className="space-y-3 rounded-xl border border-amber-200/25 bg-black/50 p-4 backdrop-blur-sm">
+            <p className="text-xs tracking-[0.25em] text-amber-100/70 uppercase">This walk is still going</p>
+            <p className="font-heading text-2xl text-amber-50">{campaignLine(meta)}</p>
+            <p className="text-sm text-stone-300">
+              {meta.season} · kit {meta.kit}. It saves itself. Close the page. Come back.
+            </p>
+            <div className="flex flex-col gap-2 sm:flex-row">
+              <Button size="lg" className="flex-1" onClick={continueRun}>
+                Continue
+              </Button>
+              <Button size="lg" variant="secondary" className="flex-1" onClick={downloadRun}>
+                Download save
+              </Button>
+            </div>
+            <p className="text-[11px] leading-snug text-stone-500">
+              Local play and the GitHub page keep separate saves. Download a copy if you move.
+            </p>
+          </div>
+        )}
+
         <div className="space-y-3 rounded-xl border border-white/15 bg-black/45 p-4 backdrop-blur-sm">
+          <p className="text-xs tracking-[0.25em] text-stone-300 uppercase">
+            {hasSave ? "Or begin a new walk" : "Begin a walk"}
+          </p>
           <label className="block text-xs tracking-widest text-stone-300 uppercase">
             Your name
             <Input
@@ -115,21 +202,37 @@ export function TitleScreen() {
               </button>
             ))}
           </div>
+          {confirmNew && meta && (
+            <p className="text-sm text-red-200/90">
+              This ends {campaignLine(meta)}. The mountain will not keep that fire.
+            </p>
+          )}
           <div className="flex flex-col gap-2 sm:flex-row">
-            {hasSave && (
-              <Button
-                size="lg"
-                variant="secondary"
-                className="flex-1"
-                onClick={() => router.push("/play")}
-              >
-                Continue
-              </Button>
-            )}
-            <Button size="lg" className="flex-1" onClick={start}>
-              Walk into the weather
+            <Button
+              size="lg"
+              className="flex-1"
+              variant={hasSave ? "secondary" : "default"}
+              onClick={onNewWalk}
+            >
+              {confirmNew && meta
+                ? `End ${meta.name}’s day ${meta.daysSurvived}`
+                : "Walk into the weather"}
+            </Button>
+            <Button size="lg" variant="secondary" className="flex-1" onClick={() => fileRef.current?.click()}>
+              Load save
             </Button>
           </div>
+          <input
+            ref={fileRef}
+            type="file"
+            accept="application/json,.json"
+            className="hidden"
+            onChange={(e) => {
+              onPickFile(e.target.files?.[0]);
+              e.target.value = "";
+            }}
+          />
+          {loadError && <p className="text-sm text-red-200/90">{loadError}</p>}
         </div>
       </div>
     </div>
