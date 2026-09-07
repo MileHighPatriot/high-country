@@ -1,4 +1,4 @@
-"use client";
+use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -30,7 +30,7 @@ import {
   seasonLabel,
   weatherLabel,
 } from "@/lib/game/engine";
-import { loadGame, saveGame } from "@/lib/game/save";
+import { clearSave, downloadGame, loadGame, saveGame } from "@/lib/game/save";
 import {
   deathCauseLabel,
   knownMap,
@@ -138,44 +138,24 @@ function CrossfadePlate({
   );
 }
 
-function Meter({ label, value, warn }: { label: string; value: number; warn?: boolean }) {
-  return (
-    <div className="space-y-1">
-      <div className="flex justify-between text-[11px] tracking-wide text-stone-300 uppercase">
-        <span>{label}</span>
-        <span className={value < 25 || warn ? "text-red-300" : ""}>{Math.round(value)}</span>
-      </div>
-      <Progress value={value} className="h-1.5 bg-white/10" />
-    </div>
-  );
-}
-
-function Status({ state }: { state: GameState }) {
-  const loc = LOCATION_BY_ID[state.locationId];
-  const person = state.presentCharacterId ? CHARACTER_BY_ID[state.presentCharacterId] : null;
-  const meters = [
+function meterList(state: GameState) {
+  return [
     [METER_LABELS.hunger, state.meters.hunger],
     [METER_LABELS.thirst, state.meters.thirst],
     [METER_LABELS.warmth, state.meters.warmth],
     [METER_LABELS.energy, state.meters.energy],
     [METER_LABELS.health, state.meters.health],
   ] as const;
+}
+
+function YouBody({ state }: { state: GameState }) {
+  const person = state.presentCharacterId ? CHARACTER_BY_ID[state.presentCharacterId] : null;
+  const skill = skillStatusLine(state);
   return (
-    <aside className="space-y-4 text-sm">
-      <div>
-        <p className="text-[11px] tracking-[0.25em] text-amber-100/70 uppercase">{dateLabel(state)}</p>
-        <h2 className="font-heading text-xl text-amber-50">{loc?.name ?? state.locationId}</h2>
-        <p className="text-stone-300">
-          {hourLabel(state.hour)} · {seasonLabel(state.season)} · {weatherLabel(state.weather)}
-          {state.campfire ? " · fire" : ""}
-        </p>
-        <p className="mt-1 text-stone-400">Day {state.daysSurvived} · {state.name}</p>
-      </div>
-      <div className="space-y-2">
-        {meters.map(([label, value]) => (
-          <Meter key={label} label={label} value={value} warn={label === METER_LABELS.health && value < 40} />
-        ))}
-      </div>
+    <div className="space-y-4 overflow-y-auto px-4 pb-6 text-sm">
+      <p className="text-xs text-stone-300">
+        {state.name} · {dateLabel(state)}
+      </p>
       <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-xs text-stone-300">
         <span>Rations {state.inventory.rations}</span>
         <span>Water {state.inventory.water}</span>
@@ -193,9 +173,7 @@ function Status({ state }: { state: GameState }) {
         Eye {state.traits.eye} · Grit {state.traits.grit} · Savvy {state.traits.savvy} · Hands {state.traits.hands}
       </p>
       <p className="text-[11px] leading-snug text-stone-500">{TRAIT_LINE}</p>
-      {skillStatusLine(state) && (
-        <p className="text-[11px] leading-snug text-amber-100/70">{skillStatusLine(state)}</p>
-      )}
+      {skill && <p className="text-[11px] leading-snug text-amber-100/70">{skill}</p>}
       {state.companionId && CHARACTER_BY_ID[state.companionId] && (
         <p className="text-xs text-amber-100/90">Walking with {CHARACTER_BY_ID[state.companionId]!.name}</p>
       )}
@@ -233,18 +211,33 @@ function Status({ state }: { state: GameState }) {
           <span>Cache pelts {state.camp.cache.pelts}</span>
         </div>
       )}
-      {state.skirmish && (
-        <div className="rounded-md border border-red-300/30 bg-red-950/40 p-2 text-xs text-red-100">
-          <p className="font-medium">Skirmish</p>
-          {state.skirmish.foes.map((f) => (
-            <p key={f.id}>
-              {f.name} · {f.range} · {f.hp}/{f.maxHp}
-            </p>
-          ))}
-        </div>
-      )}
       <CountryMap state={state} />
-    </aside>
+    </div>
+  );
+}
+
+function JournalBody({ log }: { log: LogEntry[] }) {
+  return (
+    <div className="max-h-[min(70vh,32rem)] space-y-3 overflow-y-auto px-4 pb-6 text-[15px] leading-relaxed">
+      {log.map((entry, i) => {
+        const stamp = journalStamp(entry, log[i - 1]);
+        return (
+          <div key={entry.id}>
+            {stamp && (
+              <p className="mb-1 text-[10px] tracking-[0.2em] text-amber-100/45 uppercase">{stamp}</p>
+            )}
+            <p>{entry.text}</p>
+            {entry.roll && (
+              <p className={`mt-1 font-mono text-xs ${entry.roll.success ? "text-amber-200" : "text-red-300"}`}>
+                d20 {entry.roll.d20} + {entry.roll.trait} {entry.roll.modifier}
+                {entry.roll.penalty ? ` − ${entry.roll.penalty}` : ""} = {entry.roll.total} vs DC {entry.roll.dc}
+                {entry.roll.success ? " · success" : " · fail"}
+              </p>
+            )}
+          </div>
+        );
+      })}
+    </div>
   );
 }
 
@@ -293,7 +286,7 @@ function CampStage({
         <button
           type="button"
           className="hc-camp-piece pointer-events-auto"
-          style={{ left: "4%", bottom: "42%", width: "min(26vw, 15rem)" }}
+          style={{ left: "6%", bottom: "50%", width: "min(22vw, 13rem)" }}
           disabled={!leanChoice || waiting}
           onClick={() => leanChoice && onAct(leanChoice)}
         >
@@ -306,7 +299,7 @@ function CampStage({
         <button
           type="button"
           className={cn("hc-camp-piece pointer-events-auto", fireDying && "hc-fire-dying")}
-          style={{ left: "36%", bottom: "38%", width: "min(20vw, 12rem)" }}
+          style={{ left: "38%", bottom: "46%", width: "min(18vw, 11rem)" }}
           disabled={!fireChoice || waiting}
           onClick={() => fireChoice && onAct(fireChoice)}
         >
@@ -319,7 +312,7 @@ function CampStage({
         <button
           type="button"
           className="hc-camp-piece pointer-events-auto"
-          style={{ left: "56%", bottom: "40%", width: "min(22vw, 13rem)" }}
+          style={{ left: "58%", bottom: "48%", width: "min(20vw, 12rem)" }}
           disabled={!woodChoice || waiting}
           onClick={() => woodChoice && onAct(woodChoice)}
         >
@@ -332,7 +325,7 @@ function CampStage({
         <button
           type="button"
           className="hc-camp-hit pointer-events-auto"
-          style={{ left: "8%", bottom: "34%" }}
+          style={{ left: "10%", bottom: "42%" }}
           disabled={waterChoice.disabled || waiting}
           onClick={() => onAct(waterChoice)}
         >
@@ -343,7 +336,7 @@ function CampStage({
         <button
           type="button"
           className={cn("hc-camp-figure pointer-events-auto", arrivalIn && "hc-figure-in")}
-          style={{ right: "3%", left: "auto", bottom: "36%" }}
+          style={{ right: "4%", left: "auto", bottom: "44%" }}
           disabled={!talk || waiting}
           onClick={() => talk && onAct(talk)}
         >
@@ -452,15 +445,19 @@ export function PlayScreen() {
   const [cinema, setCinema] = useState<CinemaSequence | null>(null);
   const [choiceHold, setChoiceHold] = useState(false);
   const [tendOpen, setTendOpen] = useState(false);
+  const [youOpen, setYouOpen] = useState(false);
+  const [journalOpen, setJournalOpen] = useState(false);
+  const [saveNote, setSaveNote] = useState<string | null>(null);
   const [intent, setIntent] = useState("");
   const holdTimer = useRef<number>(0);
-  const journalEnd = useRef<HTMLDivElement>(null);
   const booted = useRef(false);
 
   useEffect(() => {
     if (booted.current) return;
     booted.current = true;
-    const existing = loadGame();
+    const wantsFresh = params.get("fresh") === "1";
+    if (wantsFresh) clearSave();
+    const existing = wantsFresh ? null : loadGame();
     if (existing && !existing.dead) {
       setState(existing);
       if (params.toString()) router.replace("/play");
@@ -475,16 +472,13 @@ export function PlayScreen() {
   }, [params, router]);
 
   useEffect(() => {
-    if (state) saveGame(state);
+    if (!state) return;
+    saveGame(state);
   }, [state]);
 
   useEffect(() => {
     return () => window.clearTimeout(holdTimer.current);
   }, []);
-
-  useEffect(() => {
-    journalEnd.current?.scrollIntoView({ block: "end" });
-  }, [state?.log.length, state?.log.at(-1)?.id]);
 
   const choices = useMemo(() => (state ? getChoices(state) : []), [state]);
   const scene = useMemo(() => (state ? getScene(state, choices) : null), [state, choices]);
@@ -508,6 +502,21 @@ export function PlayScreen() {
     if (!state || choice.disabled) return;
     setTendOpen(false);
     commit(state, choice.action);
+  }
+
+  function keepNow() {
+    if (!state) return;
+    if (saveGame(state)) {
+      setSaveNote("Kept this walk.");
+      return;
+    }
+    const downloaded = downloadGame(state);
+    setSaveNote(downloaded ? "Could not keep it here. A file downloaded." : "Could not keep this walk.");
+  }
+
+  function goTitle() {
+    if (state) saveGame(state);
+    router.push("/");
   }
 
   if (!state || !art) {
@@ -560,21 +569,25 @@ export function PlayScreen() {
   const atmosphere = timeAtmosphere(state, art.atmosphere);
   const tell = livingTellFromState(state);
   const atCamp = Boolean(state.camp && state.camp.locationId === state.locationId);
+  const loc = LOCATION_BY_ID[state.locationId];
   const log = state.skirmish ? state.log.slice(-6) : state.log;
+  const recent = log.slice(-2);
 
   return (
     <div
       className={cn(
-        "relative min-h-dvh overflow-hidden text-stone-100",
+        "relative min-h-dvh text-stone-100",
         (choiceHold || state.waitScene) && "hc-hour-play",
       )}
       data-living-tell={tell}
     >
-      <CrossfadePlate src={art.location} ken />
-      <CrossfadePlate src={atmosphere} className="mix-blend-multiply opacity-45" />
-      <div className={`absolute inset-0 transition-colors duration-[1800ms] ${timeGrade(state.hour)}`} />
-      <LivingPlate tell={tell} />
-      <div className="absolute inset-0 bg-gradient-to-t from-black via-black/55 to-black/25" />
+      <div className="pointer-events-none absolute inset-0">
+        <CrossfadePlate src={art.location} ken />
+        <CrossfadePlate src={atmosphere} className="mix-blend-multiply opacity-45" />
+        <div className={`absolute inset-0 transition-colors duration-[1800ms] ${timeGrade(state.hour)}`} />
+        <LivingPlate tell={tell} />
+        <div className="absolute inset-0 bg-gradient-to-t from-black via-black/55 to-black/25" />
+      </div>
       <CampStage
         state={state}
         choices={choices}
@@ -597,36 +610,78 @@ export function PlayScreen() {
         />
       )}
 
-      <div className="relative z-10 mx-auto grid min-h-dvh max-w-6xl gap-6 px-4 py-4 lg:grid-cols-[1fr_280px] lg:items-end">
-        <div className="relative flex flex-col justify-end gap-4 pb-4">
-          {art.portrait && !state.presentCharacterId && !state.waitScene?.arrivalId && (
-            <div className="h-40 w-28 overflow-hidden rounded-md border border-white/20 shadow-lg sm:h-52 sm:w-36">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={art.portrait} alt="" className="h-full w-full object-cover" />
+      <div className="relative z-10 flex min-h-dvh flex-col pointer-events-none">
+        <header className="pointer-events-auto border-b border-white/10 bg-black/55 px-3 py-2 pr-24 backdrop-blur-md">
+          <div className="mx-auto flex max-w-6xl flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <div className="min-w-0">
+              <h2 className="truncate font-heading text-lg text-amber-50">{loc?.name ?? state.locationId}</h2>
+              <p className="truncate text-[11px] text-stone-300">
+                Day {state.daysSurvived} · {hourLabel(state.hour)} · {seasonLabel(state.season)} · {weatherLabel(state.weather)}
+                {state.campfire ? " · fire" : ""}
+              </p>
+            </div>
+            <div className="flex min-w-0 flex-wrap gap-x-3 gap-y-1">
+              {meterList(state).map(([label, value]) => (
+                <div key={label} className="w-[4.6rem] space-y-0.5">
+                  <div className="flex justify-between text-[10px] tracking-wide text-stone-300 uppercase">
+                    <span>{label}</span>
+                    <span className={value < 25 || (label === METER_LABELS.health && value < 40) ? "text-red-300" : ""}>
+                      {Math.round(value)}
+                    </span>
+                  </div>
+                  <Progress value={value} className="h-1 bg-white/10" />
+                </div>
+              ))}
+            </div>
+            <div className="flex flex-wrap items-center gap-1.5">
+              <Button size="xs" variant="secondary" onClick={() => setYouOpen(true)}>
+                You
+              </Button>
+              <Button size="xs" variant="secondary" onClick={() => setJournalOpen(true)}>
+                Journal
+              </Button>
+              <Button size="xs" onClick={keepNow}>
+                Keep
+              </Button>
+              <Button size="xs" variant="ghost" onClick={goTitle}>
+                Title
+              </Button>
+            </div>
+          </div>
+          <p className="mx-auto mt-1 max-w-6xl text-[11px] text-stone-400">
+            Rations {state.inventory.rations} · Water {state.inventory.water} · Wood {state.inventory.firewood} · Pelts{" "}
+            {state.inventory.pelts} · Powder {state.inventory.powder}
+            {state.inventory.coat ? " · coat" : ""}
+          </p>
+          {saveNote && (
+            <p className="mx-auto mt-1 max-w-6xl text-[11px] text-amber-100/85">{saveNote}</p>
+          )}
+        </header>
+
+        <div className="min-h-[8rem] flex-1" />
+
+        <div className="pointer-events-auto mx-auto w-full max-w-3xl space-y-3 px-3 pb-4">
+          {state.skirmish && (
+            <div className="rounded-md border border-red-300/30 bg-red-950/55 p-2 text-xs text-red-100">
+              <p className="font-medium">Skirmish</p>
+              {state.skirmish.foes.map((f) => (
+                <p key={f.id}>
+                  {f.name} · {f.range} · {f.hp}/{f.maxHp}
+                </p>
+              ))}
             </div>
           )}
-          <div className="relative z-20 max-h-[38vh] space-y-3 overflow-y-auto rounded-lg bg-black/40 px-3 py-3 pr-2 text-[15px] leading-relaxed backdrop-blur-sm sm:max-h-[44vh] sm:text-base">
-            <p className="text-[11px] tracking-[0.25em] text-amber-100/60 uppercase">Journal</p>
-            {log.map((entry, i) => {
-              const stamp = journalStamp(entry, log[i - 1]);
-              return (
-                <div key={entry.id}>
-                  {stamp && (
-                    <p className="mb-1 text-[10px] tracking-[0.2em] text-amber-100/45 uppercase">{stamp}</p>
-                  )}
-                  <p>{entry.text}</p>
-                  {entry.roll && (
-                    <p className={`mt-1 font-mono text-xs ${entry.roll.success ? "text-amber-200" : "text-red-300"}`}>
-                      d20 {entry.roll.d20} + {entry.roll.trait} {entry.roll.modifier}
-                      {entry.roll.penalty ? ` − ${entry.roll.penalty}` : ""} = {entry.roll.total} vs DC {entry.roll.dc}
-                      {entry.roll.success ? " · success" : " · fail"}
-                    </p>
-                  )}
-                </div>
-              );
-            })}
-            <div ref={journalEnd} />
-          </div>
+          <button
+            type="button"
+            className="w-full rounded-lg bg-black/45 px-3 py-2 text-left text-[15px] leading-relaxed backdrop-blur-sm"
+            onClick={() => setJournalOpen(true)}
+          >
+            {recent.map((entry) => (
+              <p key={entry.id} className="line-clamp-2 text-stone-100">
+                {entry.text}
+              </p>
+            ))}
+          </button>
           {state.waitScene ? null : state.pendingRoll ? (
             <FateDie
               pending={state.pendingRoll}
@@ -649,7 +704,7 @@ export function PlayScreen() {
           ) : (
             <div
               className={cn(
-                "hc-choices space-y-3",
+                "hc-choices space-y-3 rounded-lg bg-black/40 px-3 py-3 backdrop-blur-sm",
                 choiceHold && "is-held",
                 livingTellFrostsChrome(tell) && "hc-live-frost",
               )}
@@ -768,10 +823,26 @@ export function PlayScreen() {
             </div>
           )}
         </div>
-        <div className="rounded-xl border border-white/15 bg-black/50 p-4 backdrop-blur-md">
-          <Status state={state} />
-        </div>
       </div>
+
+      <Sheet open={youOpen} onOpenChange={setYouOpen}>
+        <SheetContent side="right" className="border-white/15 bg-black/94 text-stone-100">
+          <SheetHeader>
+            <SheetTitle className="text-amber-50">{state.name}</SheetTitle>
+            <SheetDescription className="text-stone-400">Pack, people, and country you have named.</SheetDescription>
+          </SheetHeader>
+          <YouBody state={state} />
+        </SheetContent>
+      </Sheet>
+      <Sheet open={journalOpen} onOpenChange={setJournalOpen}>
+        <SheetContent side="bottom" className="border-white/15 bg-black/94 text-stone-100 sm:max-w-none">
+          <SheetHeader>
+            <SheetTitle className="text-amber-50">Journal</SheetTitle>
+            <SheetDescription className="text-stone-400">What this walk has already spent.</SheetDescription>
+          </SheetHeader>
+          <JournalBody log={log} />
+        </SheetContent>
+      </Sheet>
       {cinema && <Cinema sequence={cinema} tell={tell} onDone={() => setCinema(null)} />}
     </div>
   );
