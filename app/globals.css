@@ -163,6 +163,9 @@
 .fate-die-scene {
   margin: 0.7rem 0 0;
   max-width: 26rem;
+  max-height: 8rem;
+  overflow-y: auto;
+  overflow-wrap: anywhere;
   font-size: 0.95rem;
   line-height: 1.45;
   color: rgb(228 216 196);
@@ -412,6 +415,38 @@
 .hc-choices.is-held {
   opacity: 0;
   pointer-events: none;
+}
+
+.hc-stage {
+  position: absolute;
+  inset: 0 0 min(48dvh, 30rem) 0;
+  z-index: 8;
+  pointer-events: none;
+}
+
+.hc-hud {
+  position: absolute;
+  inset: auto 0 0;
+  z-index: 20;
+  max-height: min(48dvh, 30rem);
+}
+
+.hc-choice-btn {
+  height: auto;
+  min-height: 2.25rem;
+  max-width: 100%;
+  padding-top: 0.45rem;
+  padding-bottom: 0.45rem;
+  white-space: normal;
+  text-align: left;
+  line-height: 1.25;
+}
+
+.hc-now {
+  min-height: 0;
+  max-height: min(28vh, 11rem);
+  overflow-y: auto;
+  overflow-wrap: anywhere;
 }
 
 .hc-cinema {
@@ -834,7 +869,7 @@
   transition: opacity 2.2s ease, filter 2.2s ease;
 }
 .hc-camp-figure {
-  height: min(46vh, 22rem);
+  height: min(34vh, 16rem);
   width: auto;
 }
 .hc-camp-figure img {
