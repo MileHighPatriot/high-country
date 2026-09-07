@@ -6,6 +6,7 @@ import { Cinema } from "@/components/game/cinema";
 import { FateDie } from "@/components/game/fate-die";
 import { LivingPlate } from "@/components/game/living-plate";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
 import {
   Sheet,
@@ -42,6 +43,8 @@ import type { Choice, GameAction, GameState, Kit, LogEntry } from "@/lib/game/ty
 import { timeBand } from "@/lib/game/types";
 import { cn } from "@/lib/utils";
 import { livingTellFromState, livingTellFrostsChrome } from "@/lib/game/living-plate";
+import { getScene } from "@/lib/game/scene";
+import { peopleAt } from "@/lib/game/world";
 import { withBase } from "@/lib/paths";
 
 function timeAtmosphere(state: GameState, fallback: string) {
@@ -196,7 +199,24 @@ function Status({ state }: { state: GameState }) {
       {state.companionId && CHARACTER_BY_ID[state.companionId] && (
         <p className="text-xs text-amber-100/90">Walking with {CHARACTER_BY_ID[state.companionId]!.name}</p>
       )}
-      {person && !state.companionId && <p className="text-xs text-amber-100/80">Here: {person.name}</p>}
+      {person && !state.companionId && peopleAt(state).length === 0 && (
+        <p className="text-xs text-amber-100/80">Here: {person.name}</p>
+      )}
+      {peopleAt(state).length > 0 && (
+        <ul className="space-y-0.5 text-[11px] text-stone-400">
+          {peopleAt(state).map((p) => {
+            const n = CHARACTER_BY_ID[p.id]?.name ?? p.id;
+            const stand = state.standing[p.id] ?? 0;
+            return (
+              <li key={p.id}>
+                {n}
+                {stand ? ` · standing ${stand > 0 ? "+" : ""}${stand}` : ""}
+                {p.errand ? ` · ${p.errand}` : ""}
+              </li>
+            );
+          })}
+        </ul>
+      )}
       {state.camp && (
         <p className="text-xs text-amber-100/70">
           Camp at {LOCATION_BY_ID[state.camp.locationId]?.name ?? state.camp.locationId}
@@ -432,13 +452,18 @@ export function PlayScreen() {
   const [cinema, setCinema] = useState<CinemaSequence | null>(null);
   const [choiceHold, setChoiceHold] = useState(false);
   const [tendOpen, setTendOpen] = useState(false);
+  const [intent, setIntent] = useState("");
   const holdTimer = useRef<number>(0);
   const journalEnd = useRef<HTMLDivElement>(null);
+  const booted = useRef(false);
 
   useEffect(() => {
+    if (booted.current) return;
+    booted.current = true;
     const existing = loadGame();
     if (existing && !existing.dead) {
       setState(existing);
+      if (params.toString()) router.replace("/play");
       return;
     }
     const name = params.get("name") || "Trapper";
@@ -446,7 +471,8 @@ export function PlayScreen() {
     const fresh = createGame(name, kit);
     saveGame(fresh);
     setState(fresh);
-  }, [params]);
+    if (params.toString()) router.replace("/play");
+  }, [params, router]);
 
   useEffect(() => {
     if (state) saveGame(state);
@@ -461,6 +487,7 @@ export function PlayScreen() {
   }, [state?.log.length, state?.log.at(-1)?.id]);
 
   const choices = useMemo(() => (state ? getChoices(state) : []), [state]);
+  const scene = useMemo(() => (state ? getScene(state, choices) : null), [state, choices]);
   const art = state ? artFor(state) : null;
 
   function commit(prev: GameState, action: GameAction) {
@@ -627,6 +654,32 @@ export function PlayScreen() {
                 livingTellFrostsChrome(tell) && "hc-live-frost",
               )}
             >
+              {idle && scene && (
+                <p className="max-w-xl text-sm leading-relaxed text-amber-50/90">{scene.narration}</p>
+              )}
+              {idle && scene?.attemptHint && (
+                <form
+                  className="flex max-w-xl gap-2"
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    const text = intent.trim();
+                    if (!text || !state) return;
+                    setIntent("");
+                    commit(state, { type: "attempt", text });
+                  }}
+                >
+                  <Input
+                    value={intent}
+                    onChange={(e) => setIntent(e.target.value)}
+                    placeholder="I try…"
+                    maxLength={80}
+                    className="border-white/20 bg-black/40 text-stone-100"
+                  />
+                  <Button type="submit" variant="secondary" disabled={!intent.trim()}>
+                    Try
+                  </Button>
+                </form>
+              )}
               {idle &&
                 showHero
                   .filter((c) => c.action.type === "wait")

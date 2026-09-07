@@ -18,7 +18,6 @@ import {
   recoverOnStrike,
   spendFromPackOrCache,
   tickCampHour,
-  WANDERERS,
 } from "@/lib/game/camp";
 import {
   cacheCopy,
@@ -45,6 +44,9 @@ import { LOCATION_BY_ID } from "@/lib/game/content/locations";
 import { pickOpening } from "@/lib/game/content/openings";
 import { packCap, practiceSkill, skilledDc } from "@/lib/game/progress";
 import { deathSentence, JOURNAL_KEEP, trailHours } from "@/lib/game/readout";
+import { attemptCopy, planAttempt } from "@/lib/game/attempt";
+import { isLiveTalk, liveTalkEncounter } from "@/lib/game/talk";
+import { peopleAt, placePerson, seedWorld, syncPresence, tickWorldHour } from "@/lib/game/world";
 import { withBase } from "@/lib/paths";
 import type {
   CampJob,
@@ -468,15 +470,16 @@ function applyOutcome(state: GameState, outcome: Outcome): GameState {
     next.knownLocations.push(outcome.unlockLocation);
   }
   if (outcome.presentCharacter !== undefined) {
-    next.presentCharacterId = outcome.presentCharacter;
+    next = placePerson(next, outcome.presentCharacter, next.locationId);
   }
   if (outcome.markDialogue && !next.seenDialogueIds.includes(outcome.markDialogue)) {
     next.seenDialogueIds.push(outcome.markDialogue);
   }
   if (outcome.remember) {
     const { id, tag } = outcome.remember;
-    const list = next.memories[id] ?? [];
-    if (!list.includes(tag)) next.memories = { ...next.memories, [id]: [...list, tag] };
+    const memories = next.memories ?? {};
+    const list = memories[id] ?? [];
+    if (!list.includes(tag)) next.memories = { ...memories, [id]: [...list, tag] };
   }
   if (outcome.hours) next = advanceTime(next, outcome.hours);
   if (outcome.weather) {
@@ -653,6 +656,7 @@ export function advanceTime(state: GameState, hours: number): GameState {
       next.rngSeed = nextSeed(next.rngSeed);
     }
     next = finalizeHealth(next, true);
+    if (!next.dead) next = tickWorldHour(next);
   }
   if (next.camp && campNotes.includes("ravens")) {
     next.camp = addCampExtra(next.camp, "raven-theft");
@@ -721,7 +725,7 @@ function beginEncounter(state: GameState, enc: EncounterDef): GameState {
     activeEncounterId: enc.id,
     rngSeed: nextSeed(state.rngSeed),
   };
-  if (enc.characterId) next.presentCharacterId = enc.characterId;
+  if (enc.characterId) next = placePerson(next, enc.characterId, next.locationId);
   next = appendLog(next, enc.text);
   if (enc.intense) {
     const risky = enc.choices.find((c) => c.check);
@@ -746,65 +750,20 @@ function getActiveEncounter(state: GameState): EncounterDef | undefined {
   if (!id) return undefined;
   const fromBook = allEncounters().find((e) => e.id === id);
   if (fromBook) return fromBook;
+  if (isLiveTalk(id) && state.presentCharacterId) {
+    return liveTalkEncounter(state, state.presentCharacterId);
+  }
   if (id.startsWith("dlg-")) return findDialogueEncounter(state);
   if (id.startsWith("chore-")) return choreEncounter(state, choreKindFromId(id));
   return undefined;
 }
 
-function inSeason(c: (typeof CHARACTERS)[number], state: GameState) {
-  return c.seasons === "all" || c.seasons.includes(state.season);
+function presentPeople(state: GameState, _opts?: { ignoreHours?: boolean }) {
+  return peopleAt(state).map((life) => CHARACTER_BY_ID[life.id]).filter((c): c is NonNullable<typeof c> => Boolean(c));
 }
 
-function inHours(c: (typeof CHARACTERS)[number], hour: number) {
-  if (!c.hours || c.hours.length === 0) return true;
-  return c.hours.includes(timeBand(hour));
-}
-
-function presentPeople(state: GameState, opts?: { ignoreHours?: boolean }) {
-  return CHARACTERS.filter((c) => {
-    if (!c.home.includes(state.locationId)) return false;
-    if (!inSeason(c, state)) return false;
-    if (!opts?.ignoreHours && !inHours(c, state.hour)) return false;
-    return true;
-  });
-}
-
-function smokeVisitorPool(state: GameState) {
-  const loc = LOCATION_BY_ID[state.locationId];
-  const nearby = new Set<LocationId>([state.locationId, ...(loc?.connections.map((e) => e.to) ?? [])]);
-  return CHARACTERS.filter((c) => {
-    if (!inSeason(c, state)) return false;
-    if (WANDERERS.includes(c.id as (typeof WANDERERS)[number])) return true;
-    return c.home.some((h) => nearby.has(h));
-  });
-}
-
-const CORE_PEOPLE = new Set(["eliza-ward", "silas-crowe", "two-crows"]);
-
-function maybePresentCharacter(state: GameState, opts?: { smoke?: boolean }): GameState {
-  const smokePull = Boolean(opts?.smoke || (atOwnCamp(state) && (state.camp?.smoke ?? 0) >= 2));
-  const onHours = presentPeople(state);
-  const coreHere = onHours.filter((c) => CORE_PEOPLE.has(c.id));
-  const othersHere = onHours.filter((c) => !CORE_PEOPLE.has(c.id));
-  const rng = mulberry32(state.rngSeed + 99);
-  let nextSeeded: GameState = { ...state, rngSeed: nextSeed(state.rngSeed) };
-
-  if (coreHere.length && rng() < 0.58) {
-    const pick = coreHere[Math.floor(rng() * coreHere.length)]!;
-    return { ...nextSeeded, presentCharacterId: pick.id };
-  }
-  if (smokePull) {
-    const pool = smokeVisitorPool(state).filter((c) => CORE_PEOPLE.has(c.id));
-    if (pool.length && rng() < 0.4) {
-      const pick = pool[Math.floor(rng() * pool.length)]!;
-      return { ...nextSeeded, presentCharacterId: pick.id };
-    }
-  }
-  if (othersHere.length && rng() < 0.08) {
-    const pick = othersHere[Math.floor(rng() * othersHere.length)]!;
-    return { ...nextSeeded, presentCharacterId: pick.id };
-  }
-  return { ...nextSeeded, presentCharacterId: null };
+function maybePresentCharacter(state: GameState, _opts?: { smoke?: boolean }): GameState {
+  return syncPresence(state);
 }
 
 function rememberTag(state: GameState, id: CharacterId, tag: string): GameState {
@@ -962,6 +921,7 @@ export function createGame(name: string, kit: Kit): GameState {
   };
   if (opening.apply) state = opening.apply(state, mulberry32(state.rngSeed));
   state.rngSeed = nextSeed(state.rngSeed);
+  state = seedWorld(state);
   if (state.presentCharacterId) {
     // Opening may seat someone; leave them.
   } else {
@@ -1026,18 +986,16 @@ function talk(state: GameState): GameState {
     if (n.unlessMemory && mem.includes(n.unlessMemory)) return false;
     return true;
   };
-  const node =
-    person.nodes.find((n) => fits(n) && !n.repeatable && !state.seenDialogueIds.includes(n.id)) ??
-    person.nodes.find((n) => fits(n) && n.repeatable);
-  if (!node) {
-    return appendLog(advanceTime(state, 1), fallbackLine(person, mem));
+  const node = person.nodes.find((n) => fits(n) && !n.repeatable && !state.seenDialogueIds.includes(n.id));
+  if (node) {
+    const fake: EncounterDef = {
+      id: `dlg-${node.id}`,
+      text: node.text,
+      choices: node.choices,
+    };
+    return beginEncounter({ ...state, presentCharacterId: id }, fake);
   }
-  const fake: EncounterDef = {
-    id: `dlg-${node.id}`,
-    text: node.text,
-    choices: node.choices,
-  };
-  return beginEncounter({ ...state, presentCharacterId: id }, fake);
+  return beginEncounter({ ...state, presentCharacterId: id }, liveTalkEncounter(state, id));
 }
 
 function travel(state: GameState, to: LocationId): GameState {
@@ -1062,10 +1020,13 @@ function travel(state: GameState, to: LocationId): GameState {
   }
   next.locationId = to;
   if (!next.knownLocations.includes(to)) next.knownLocations = [...next.knownLocations, to];
+  if (state.companionId) {
+    next.companionId = state.companionId;
+    next = placePerson(next, state.companionId, to);
+  }
   const arrivingCamp = Boolean(next.camp && next.camp.locationId === to);
   next = maybePresentCharacter(next, { smoke: arrivingCamp && (next.camp?.smoke ?? 0) >= 2 });
   if (state.companionId) {
-    next.companionId = state.companionId;
     next.presentCharacterId = state.companionId;
   }
   let arrival = arrivalParagraph(next, to, edge.trailName);
@@ -1367,27 +1328,20 @@ function CLAIMED_HERE(id: LocationId) {
 function beginWait(state: GameState): GameState {
   if (state.waitScene) return state;
   const hours = waitHours(state);
-  const rng = mulberry32(state.rngSeed);
-  let arrivalId: CharacterId | null = null;
-  if (!state.companionId && !state.presentCharacterId && rng() < 0.45) {
-    const here = presentPeople(state);
-    const core = here.filter((c) => CORE_PEOPLE.has(c.id));
-    const pool = core.length ? core : rng() < 0.12 ? here : [];
-    if (pool.length) arrivalId = pool[Math.floor(rng() * pool.length)]!.id;
-  }
   const scene: WaitScene = {
     hours,
     fromHour: state.hour,
     fireLit: state.campfire,
     fireDies: state.campfire && fireHoursLeft(state) <= hours,
-    arrivalId,
+    arrivalId: null,
   };
-  return { ...state, rngSeed: nextSeed(state.rngSeed), waitScene: scene };
+  return { ...state, waitScene: scene };
 }
 
 function finishWait(state: GameState): GameState {
   const scene = state.waitScene;
   if (!scene) return state;
+  const before = new Set(peopleAt(state).map((p) => p.id));
   let next: GameState = { ...state, waitScene: null };
   next = advanceTime(next, scene.hours);
   if (next.dead) return appendLog(next, "You wait. The weather finishes the sentence.");
@@ -1397,13 +1351,17 @@ function finishWait(state: GameState): GameState {
   else if (state.weather === "storm" && rng() < 0.18) next.weather = "wind";
   else if (state.weather === "clear" && rng() < 0.08) next.weather = pickWeather(next.season, rng);
   next = appendLog(next, waitFlavor(next));
-  if (state.companionId) {
+  const newcomers = peopleAt(next).filter((p) => !before.has(p.id) && p.id !== next.companionId);
+  if (next.companionId) {
     next.companionId = state.companionId;
-    next.presentCharacterId = state.companionId;
-  } else if (scene.arrivalId) {
-    next.presentCharacterId = scene.arrivalId;
-    const name = CHARACTER_BY_ID[scene.arrivalId]?.name;
+    next.presentCharacterId = next.companionId ?? null;
+  } else if (newcomers.length) {
+    const arrival = newcomers[0]!;
+    next.presentCharacterId = arrival.id;
+    const name = CHARACTER_BY_ID[arrival.id]?.name;
     if (name) next = appendLog(next, `${name} walks into the hour without asking.`);
+  } else {
+    next = maybePresentCharacter(next);
   }
   if (scene.fireDies) {
     next = appendLog(next, "The fire goes to a rumor of coal.");
@@ -1849,20 +1807,7 @@ export function applyAction(state: GameState, action: GameAction): GameState {
         meters: { ...spent.meters, hunger: clamp(spent.meters.hunger + 22) },
       };
       next = appendLog(advanceTime(next, 1), eatCopy(state));
-      if (timeBand(state.hour) === "dusk" && state.campfire) {
-        const rng = mulberry32(next.rngSeed);
-        next = { ...next, rngSeed: nextSeed(next.rngSeed) };
-        if (rng() < 0.38 && !next.presentCharacterId) {
-          const people = presentPeople(next);
-          next.presentCharacterId = people.length
-            ? people[Math.floor(rng() * people.length)]!.id
-            : rng() < 0.55
-              ? "silas-crowe"
-              : null;
-        }
-        return maybeRipple(next, "eat", 0.4);
-      }
-      return maybeRipple(next, "eat", 0.28);
+      return maybeRipple(next, "eat", timeBand(state.hour) === "dusk" && state.campfire ? 0.4 : 0.28);
     }
     case "drink": {
       const spent = spendFromPackOrCache(state, "water", 1);
@@ -1912,14 +1857,6 @@ export function applyAction(state: GameState, action: GameAction): GameState {
         next.camp.smoke = Math.min(5, next.camp.smoke + 1);
       }
       next = appendLog(advanceTime(next, 1), fireCopy(state));
-      if (timeBand(state.hour) === "dusk" || timeBand(state.hour) === "night" || state.weather === "blizzard") {
-        const rng = mulberry32(next.rngSeed);
-        next = { ...next, rngSeed: nextSeed(next.rngSeed) };
-        if (rng() < 0.3 && !next.presentCharacterId) {
-          const people = presentPeople(next);
-          if (people.length) next.presentCharacterId = people[Math.floor(rng() * people.length)]!.id;
-        }
-      }
       next = maybeRipple(next, "fire", 0.34);
       return maybeSmokeRipple(next);
     }
@@ -2244,6 +2181,24 @@ export function applyAction(state: GameState, action: GameAction): GameState {
       return expandCache(state);
     case "partWays":
       return partWays(state);
+    case "attempt": {
+      const text = action.text.trim();
+      if (!text) return appendLog(state, "You stand there with an unfinished sentence.");
+      if (/\b(talk|ask|speak)\b/i.test(text) && state.presentCharacterId && !state.pendingRoll) {
+        return talk(state);
+      }
+      const plan = planAttempt(text);
+      const armed = armActionDie(state, plan.label, plan.trait, plan.dc, { type: "attempt", text });
+      if (armed.kind === "armed") return armed.state;
+      const roll = armed.roll;
+      let next = appendLog(armed.state, rollLine(roll, plan.label), roll);
+      next = applyOutcome(next, {
+        text: attemptCopy(next, text, plan, roll.success),
+        hours: plan.hours,
+        meters: roll.success ? { energy: -6 } : { energy: -10 },
+      });
+      return maybeRipple(next, "search", roll.success ? 0.22 : 0.12);
+    }
   }
 }
 
