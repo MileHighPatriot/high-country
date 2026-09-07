@@ -63,6 +63,7 @@ export function TitleScreen() {
   const [best, setBest] = useState(0);
   const [last, setLast] = useState<DeathRecord | null>(null);
   const [confirmNew, setConfirmNew] = useState(false);
+  const [showNew, setShowNew] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
 
   function refresh() {
@@ -126,13 +127,13 @@ export function TitleScreen() {
   const hasSave = Boolean(meta);
 
   return (
-    <div className="relative min-h-dvh overflow-hidden text-stone-100">
+    <div className="relative min-h-dvh overflow-y-auto text-stone-100">
       <div
         className="absolute inset-0 bg-cover bg-center"
         style={{ backgroundImage: `url(${withBase("/art/title.jpg")})` }}
       />
       <div className="absolute inset-0 bg-gradient-to-t from-black via-black/70 to-black/30" />
-      <div className="relative z-10 mx-auto flex min-h-dvh max-w-3xl flex-col justify-end gap-6 px-5 py-10 sm:justify-center">
+      <div className="relative z-10 mx-auto flex min-h-dvh max-w-3xl flex-col justify-end gap-4 px-5 py-8 sm:justify-center">
         <p className="text-xs tracking-[0.35em] text-amber-200/80 uppercase">Colorado Front Range · 1835</p>
         <h1 className="font-heading text-4xl leading-tight sm:text-6xl">High Country</h1>
         <p className="max-w-xl text-base leading-relaxed text-stone-200/90 sm:text-lg">
@@ -171,6 +172,18 @@ export function TitleScreen() {
           </div>
         )}
 
+        {hasSave && !showNew && (
+          <div className="flex flex-col gap-2 sm:flex-row">
+            <Button size="lg" variant="secondary" className="flex-1" onClick={() => setShowNew(true)}>
+              Or begin a new walk
+            </Button>
+            <Button size="lg" variant="secondary" className="flex-1" onClick={() => fileRef.current?.click()}>
+              Load save
+            </Button>
+          </div>
+        )}
+
+        {(!hasSave || showNew) && (
         <div className="space-y-3 rounded-xl border border-white/15 bg-black/45 p-4 backdrop-blur-sm">
           <p className="text-xs tracking-[0.25em] text-stone-300 uppercase">
             {hasSave ? "Or begin a new walk" : "Begin a walk"}
@@ -222,18 +235,20 @@ export function TitleScreen() {
               Load save
             </Button>
           </div>
-          <input
-            ref={fileRef}
-            type="file"
-            accept="application/json,.json"
-            className="hidden"
-            onChange={(e) => {
-              onPickFile(e.target.files?.[0]);
-              e.target.value = "";
-            }}
-          />
           {loadError && <p className="text-sm text-red-200/90">{loadError}</p>}
         </div>
+        )}
+        <input
+          ref={fileRef}
+          type="file"
+          accept="application/json,.json"
+          className="hidden"
+          onChange={(e) => {
+            onPickFile(e.target.files?.[0]);
+            e.target.value = "";
+          }}
+        />
+        {loadError && hasSave && !showNew && <p className="text-sm text-red-200/90">{loadError}</p>}
       </div>
     </div>
   );

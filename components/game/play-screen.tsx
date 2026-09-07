@@ -37,7 +37,6 @@ import {
   METER_LABELS,
   placeName,
   skillStatusLine,
-  TRAIT_LINE,
 } from "@/lib/game/readout";
 import type { Choice, GameAction, GameState, Kit, LogEntry } from "@/lib/game/types";
 import { timeBand } from "@/lib/game/types";
@@ -84,6 +83,31 @@ function actionKey(choice: Choice) {
 function isUrgentBeat(state: GameState) {
   return Boolean(
     state.dead || state.skirmish || state.pendingRoll || state.activeEncounterId || state.waitScene,
+  );
+}
+
+function JournalList({ log }: { log: LogEntry[] }) {
+  return (
+    <>
+      {log.map((entry, i) => {
+        const stamp = journalStamp(entry, log[i - 1]);
+        return (
+          <div key={entry.id}>
+            {stamp && (
+              <p className="mb-1 text-[10px] tracking-[0.2em] text-amber-100/45 uppercase">{stamp}</p>
+            )}
+            <p className="text-[15px] leading-relaxed sm:text-base">{entry.text}</p>
+            {entry.roll && (
+              <p className={`mt-1 font-mono text-xs ${entry.roll.success ? "text-amber-200" : "text-red-300"}`}>
+                d20 {entry.roll.d20} + {entry.roll.trait} {entry.roll.modifier}
+                {entry.roll.penalty ? ` − ${entry.roll.penalty}` : ""} = {entry.roll.total} vs DC {entry.roll.dc}
+                {entry.roll.success ? " · success" : " · fail"}
+              </p>
+            )}
+          </div>
+        );
+      })}
+    </>
   );
 }
 
@@ -192,7 +216,6 @@ function Status({ state }: { state: GameState }) {
       <p className="text-xs text-stone-400">
         Eye {state.traits.eye} · Grit {state.traits.grit} · Savvy {state.traits.savvy} · Hands {state.traits.hands}
       </p>
-      <p className="text-[11px] leading-snug text-stone-500">{TRAIT_LINE}</p>
       {skillStatusLine(state) && (
         <p className="text-[11px] leading-snug text-amber-100/70">{skillStatusLine(state)}</p>
       )}
@@ -243,7 +266,14 @@ function Status({ state }: { state: GameState }) {
           ))}
         </div>
       )}
-      <CountryMap state={state} />
+      <details className="border-t border-white/10 pt-2">
+        <summary className="cursor-pointer text-[11px] tracking-[0.25em] text-amber-100/60 uppercase">
+          Country
+        </summary>
+        <div className="pt-2">
+          <CountryMap state={state} />
+        </div>
+      </details>
     </aside>
   );
 }
@@ -288,12 +318,12 @@ function CampStage({
   const waterChoice = findChoice(pool, (c) => c.action.type === "gatherWater");
 
   return (
-    <div className="pointer-events-none absolute inset-0 z-[8]">
+    <div className="pointer-events-none absolute inset-0">
       {showLean && (
         <button
           type="button"
           className="hc-camp-piece pointer-events-auto"
-          style={{ left: "4%", bottom: "42%", width: "min(26vw, 15rem)" }}
+          style={{ left: "3%", bottom: "6%", width: "min(22vw, 12rem)" }}
           disabled={!leanChoice || waiting}
           onClick={() => leanChoice && onAct(leanChoice)}
         >
@@ -306,7 +336,7 @@ function CampStage({
         <button
           type="button"
           className={cn("hc-camp-piece pointer-events-auto", fireDying && "hc-fire-dying")}
-          style={{ left: "36%", bottom: "38%", width: "min(20vw, 12rem)" }}
+          style={{ left: "30%", bottom: "4%", width: "min(18vw, 10rem)" }}
           disabled={!fireChoice || waiting}
           onClick={() => fireChoice && onAct(fireChoice)}
         >
@@ -319,7 +349,7 @@ function CampStage({
         <button
           type="button"
           className="hc-camp-piece pointer-events-auto"
-          style={{ left: "56%", bottom: "40%", width: "min(22vw, 13rem)" }}
+          style={{ left: "50%", bottom: "6%", width: "min(20vw, 11rem)" }}
           disabled={!woodChoice || waiting}
           onClick={() => woodChoice && onAct(woodChoice)}
         >
@@ -332,7 +362,7 @@ function CampStage({
         <button
           type="button"
           className="hc-camp-hit pointer-events-auto"
-          style={{ left: "8%", bottom: "34%" }}
+          style={{ left: "6%", bottom: "22%" }}
           disabled={waterChoice.disabled || waiting}
           onClick={() => onAct(waterChoice)}
         >
@@ -343,7 +373,7 @@ function CampStage({
         <button
           type="button"
           className={cn("hc-camp-figure pointer-events-auto", arrivalIn && "hc-figure-in")}
-          style={{ right: "3%", left: "auto", bottom: "36%" }}
+          style={{ right: "8%", left: "auto", bottom: "0" }}
           disabled={!talk || waiting}
           onClick={() => talk && onAct(talk)}
         >
@@ -421,8 +451,7 @@ function CountryMap({ state }: { state: GameState }) {
   const nodes = knownMap(state);
   if (nodes.length === 0) return null;
   return (
-    <div className="space-y-1.5 border-t border-white/10 pt-3">
-      <p className="text-[11px] tracking-[0.25em] text-amber-100/60 uppercase">Country</p>
+    <div className="space-y-1.5">
       <ul className="space-y-1 text-xs">
         {nodes.map((n) => (
           <li key={n.id}>
@@ -452,6 +481,8 @@ export function PlayScreen() {
   const [cinema, setCinema] = useState<CinemaSequence | null>(null);
   const [choiceHold, setChoiceHold] = useState(false);
   const [tendOpen, setTendOpen] = useState(false);
+  const [journalOpen, setJournalOpen] = useState(false);
+  const [packOpen, setPackOpen] = useState(false);
   const [intent, setIntent] = useState("");
   const holdTimer = useRef<number>(0);
   const journalEnd = useRef<HTMLDivElement>(null);
@@ -561,11 +592,15 @@ export function PlayScreen() {
   const tell = livingTellFromState(state);
   const atCamp = Boolean(state.camp && state.camp.locationId === state.locationId);
   const log = state.skirmish ? state.log.slice(-6) : state.log;
+  const lastBeat = log.at(-1);
+  const groundMoves = idle
+    ? showHero.filter((c) => c.action.type !== "wait" && c.action.type !== "travel")
+    : showHero;
 
   return (
     <div
       className={cn(
-        "relative min-h-dvh overflow-hidden text-stone-100",
+        "relative h-dvh overflow-hidden text-stone-100",
         (choiceHold || state.waitScene) && "hc-hour-play",
       )}
       data-living-tell={tell}
@@ -574,14 +609,16 @@ export function PlayScreen() {
       <CrossfadePlate src={atmosphere} className="mix-blend-multiply opacity-45" />
       <div className={`absolute inset-0 transition-colors duration-[1800ms] ${timeGrade(state.hour)}`} />
       <LivingPlate tell={tell} />
-      <div className="absolute inset-0 bg-gradient-to-t from-black via-black/55 to-black/25" />
-      <CampStage
-        state={state}
-        choices={choices}
-        spots={spots}
-        waiting={Boolean(state.waitScene)}
-        onAct={act}
-      />
+      <div className="absolute inset-0 bg-gradient-to-t from-black via-black/70 to-black/20" />
+      <div className="hc-stage">
+        <CampStage
+          state={state}
+          choices={choices}
+          spots={spots}
+          waiting={Boolean(state.waitScene)}
+          onAct={act}
+        />
+      </div>
       {state.waitScene && (
         <WaitPlay
           scene={state.waitScene}
@@ -597,179 +634,216 @@ export function PlayScreen() {
         />
       )}
 
-      <div className="relative z-10 mx-auto grid min-h-dvh max-w-6xl gap-6 px-4 py-4 lg:grid-cols-[1fr_280px] lg:items-end">
-        <div className="relative flex flex-col justify-end gap-4 pb-4">
-          {art.portrait && !state.presentCharacterId && !state.waitScene?.arrivalId && (
-            <div className="h-40 w-28 overflow-hidden rounded-md border border-white/20 shadow-lg sm:h-52 sm:w-36">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={art.portrait} alt="" className="h-full w-full object-cover" />
+      <div className="hc-hud border-t border-white/10 bg-black/78 backdrop-blur-md">
+        <div className="mx-auto grid h-full min-h-0 max-w-6xl gap-3 px-3 py-2 pb-[max(0.6rem,env(safe-area-inset-bottom))] lg:grid-cols-[minmax(0,1fr)_16.5rem]">
+          <div className="flex min-h-0 flex-col gap-2 overflow-y-auto">
+            <div className="grid grid-cols-5 gap-1 lg:hidden">
+              {(
+                [
+                  [METER_LABELS.hunger, state.meters.hunger],
+                  [METER_LABELS.thirst, state.meters.thirst],
+                  [METER_LABELS.warmth, state.meters.warmth],
+                  [METER_LABELS.energy, state.meters.energy],
+                  [METER_LABELS.health, state.meters.health],
+                ] as const
+              ).map(([label, value]) => (
+                <div key={label}>
+                  <p className="truncate text-[9px] tracking-wide text-stone-400 uppercase">{label}</p>
+                  <Progress value={value} className={cn("h-1 bg-white/10", value < 25 && "[&>div]:bg-red-400")} />
+                </div>
+              ))}
             </div>
-          )}
-          <div className="relative z-20 max-h-[38vh] space-y-3 overflow-y-auto rounded-lg bg-black/40 px-3 py-3 pr-2 text-[15px] leading-relaxed backdrop-blur-sm sm:max-h-[44vh] sm:text-base">
-            <p className="text-[11px] tracking-[0.25em] text-amber-100/60 uppercase">Journal</p>
-            {log.map((entry, i) => {
-              const stamp = journalStamp(entry, log[i - 1]);
-              return (
-                <div key={entry.id}>
-                  {stamp && (
-                    <p className="mb-1 text-[10px] tracking-[0.2em] text-amber-100/45 uppercase">{stamp}</p>
+            <div className="hc-now rounded-lg bg-black/45 px-3 py-2">
+              {lastBeat && (
+                <div className="space-y-1">
+                  {journalStamp(lastBeat, log.at(-2)) && (
+                    <p className="text-[10px] tracking-[0.2em] text-amber-100/45 uppercase">
+                      {journalStamp(lastBeat, log.at(-2))}
+                    </p>
                   )}
-                  <p>{entry.text}</p>
-                  {entry.roll && (
-                    <p className={`mt-1 font-mono text-xs ${entry.roll.success ? "text-amber-200" : "text-red-300"}`}>
-                      d20 {entry.roll.d20} + {entry.roll.trait} {entry.roll.modifier}
-                      {entry.roll.penalty ? ` − ${entry.roll.penalty}` : ""} = {entry.roll.total} vs DC {entry.roll.dc}
-                      {entry.roll.success ? " · success" : " · fail"}
+                  <p className="text-[15px] leading-relaxed text-stone-100 sm:text-base">{lastBeat.text}</p>
+                  {lastBeat.roll && (
+                    <p className={`font-mono text-xs ${lastBeat.roll.success ? "text-amber-200" : "text-red-300"}`}>
+                      d20 {lastBeat.roll.d20} + {lastBeat.roll.trait} {lastBeat.roll.modifier}
+                      {lastBeat.roll.penalty ? ` − ${lastBeat.roll.penalty}` : ""} = {lastBeat.roll.total} vs DC{" "}
+                      {lastBeat.roll.dc}
+                      {lastBeat.roll.success ? " · success" : " · fail"}
                     </p>
                   )}
                 </div>
-              );
-            })}
-            <div ref={journalEnd} />
-          </div>
-          {state.waitScene ? null : state.pendingRoll ? (
-            <FateDie
-              pending={state.pendingRoll}
-              retreats={showHero}
-              scene={state.log[state.log.length - 1]?.text}
-              onCast={() => setState((s) => (s ? applyAction(s, { type: "castDie" }) : s))}
-              onSettled={() => {
-                setState((s) => {
-                  if (!s) return s;
-                  const next = applyAction(s, { type: "finishDie" });
-                  const seq = cinemaAfterAction(s, next);
-                  if (seq) {
-                    window.setTimeout(() => setCinema(seq), 0);
-                  }
-                  return next;
-                });
-              }}
-              onRetreat={act}
-            />
-          ) : (
-            <div
-              className={cn(
-                "hc-choices space-y-3",
-                choiceHold && "is-held",
-                livingTellFrostsChrome(tell) && "hc-live-frost",
               )}
-            >
-              {idle && scene && (
-                <p className="max-w-xl text-sm leading-relaxed text-amber-50/90">{scene.narration}</p>
+              {idle && scene && scene.narration !== lastBeat?.text && (
+                <p className="mt-2 text-sm leading-relaxed text-amber-50/90">{scene.narration}</p>
               )}
-              {idle && scene?.attemptHint && (
-                <form
-                  className="flex max-w-xl gap-2"
-                  onSubmit={(e) => {
-                    e.preventDefault();
-                    const text = intent.trim();
-                    if (!text || !state) return;
-                    setIntent("");
-                    commit(state, { type: "attempt", text });
-                  }}
-                >
-                  <Input
-                    value={intent}
-                    onChange={(e) => setIntent(e.target.value)}
-                    placeholder="I try…"
-                    maxLength={80}
-                    className="border-white/20 bg-black/40 text-stone-100"
-                  />
-                  <Button type="submit" variant="secondary" disabled={!intent.trim()}>
-                    Try
-                  </Button>
-                </form>
-              )}
-              {idle &&
-                showHero
-                  .filter((c) => c.action.type === "wait")
-                  .map((c) => (
+            </div>
+            {state.waitScene ? null : state.pendingRoll ? (
+              <FateDie
+                pending={state.pendingRoll}
+                retreats={showHero}
+                scene={state.log[state.log.length - 1]?.text}
+                onCast={() => setState((s) => (s ? applyAction(s, { type: "castDie" }) : s))}
+                onSettled={() => {
+                  setState((s) => {
+                    if (!s) return s;
+                    const next = applyAction(s, { type: "finishDie" });
+                    const seq = cinemaAfterAction(s, next);
+                    if (seq) {
+                      window.setTimeout(() => setCinema(seq), 0);
+                    }
+                    return next;
+                  });
+                }}
+                onRetreat={act}
+              />
+            ) : (
+              <div
+                className={cn(
+                  "hc-choices space-y-2",
+                  choiceHold && "is-held",
+                  livingTellFrostsChrome(tell) && "hc-live-frost",
+                )}
+              >
+                {idle && scene?.attemptHint && (
+                  <form
+                    className="flex gap-2"
+                    onSubmit={(e) => {
+                      e.preventDefault();
+                      const text = intent.trim();
+                      if (!text || !state) return;
+                      setIntent("");
+                      commit(state, { type: "attempt", text });
+                    }}
+                  >
+                    <Input
+                      value={intent}
+                      onChange={(e) => setIntent(e.target.value)}
+                      placeholder="I try…"
+                      maxLength={80}
+                      className="border-white/20 bg-black/40 text-stone-100"
+                    />
+                    <Button type="submit" variant="secondary" disabled={!intent.trim()}>
+                      Try
+                    </Button>
+                  </form>
+                )}
+                {idle &&
+                  showHero
+                    .filter((c) => c.action.type === "wait")
+                    .map((c) => (
+                      <Button
+                        key={c.id}
+                        disabled={c.disabled}
+                        title={c.hint}
+                        onClick={() => act(c)}
+                        className="h-11 w-full max-w-md px-4 text-base tracking-[0.12em] sm:h-12"
+                      >
+                        {c.label}
+                      </Button>
+                    ))}
+                <div className="flex flex-wrap gap-2">
+                  {groundMoves.map((c) => (
                     <Button
                       key={c.id}
+                      size={idle ? "default" : "lg"}
+                      variant={c.action.type === "skirmish" && c.id === "flee" ? "secondary" : "default"}
                       disabled={c.disabled}
                       title={c.hint}
                       onClick={() => act(c)}
-                      className="h-12 min-w-[16rem] px-6 text-base tracking-[0.14em] sm:h-14 sm:min-w-[20rem] sm:text-lg"
+                      className="hc-choice-btn"
                     >
                       {c.label}
                     </Button>
                   ))}
-              <div className="flex flex-wrap gap-2">
-                {(idle
-                  ? showHero.filter(
-                      (c) =>
-                        c.action.type !== "wait" &&
-                        c.action.type !== "talk" &&
-                        c.action.type !== "travel" &&
-                        c.action.type !== "gatherWater" &&
-                        c.action.type !== "gatherWood" &&
-                        c.action.type !== "makeFire" &&
-                        c.action.type !== "tendFire",
-                    )
-                  : showHero
-                ).map((c) => (
-                  <Button
-                    key={c.id}
-                    size={idle ? "default" : "lg"}
-                    variant={c.action.type === "skirmish" && c.id === "flee" ? "secondary" : "default"}
-                    disabled={c.disabled}
-                    title={c.hint}
-                    onClick={() => act(c)}
-                  >
-                    {c.label}
-                  </Button>
-                ))}
-              </div>
-              {idle && routine.length > 0 && (
-                <Sheet open={tendOpen} onOpenChange={setTendOpen}>
-                  <SheetTrigger className="inline-flex h-8 items-center rounded-lg border border-white/20 bg-black/40 px-3 text-[0.8rem] tracking-[0.18em] text-amber-100/75 uppercase hover:border-amber-200/40 hover:text-amber-50">
-                    {atCamp ? "Your camp" : "Tend camp"}
-                  </SheetTrigger>
-                  <SheetContent
-                    side="bottom"
-                    className="border-white/15 bg-black/92 text-stone-100 sm:max-w-none"
-                  >
-                    <SheetHeader>
-                      <SheetTitle className="text-amber-50">{atCamp ? "Your camp" : "Tend camp"}</SheetTitle>
-                      <SheetDescription className="text-stone-400">
-                        {atCamp ? "The work of this ground." : "Small work. The mountain keeps the hours."}
-                      </SheetDescription>
-                    </SheetHeader>
-                    <div className={cn("flex flex-wrap gap-2 px-4 pb-6", atCamp && "sm:grid sm:grid-cols-2 sm:gap-2")}>
-                      {routine.map((c) => (
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <Sheet open={journalOpen} onOpenChange={setJournalOpen}>
+                    <SheetTrigger className="inline-flex h-8 items-center rounded-lg border border-white/20 bg-black/40 px-3 text-[0.8rem] tracking-[0.18em] text-amber-100/75 uppercase hover:border-amber-200/40 hover:text-amber-50">
+                      Journal
+                    </SheetTrigger>
+                    <SheetContent side="bottom" className="max-h-[70dvh] border-white/15 bg-black/92 text-stone-100 sm:max-w-none">
+                      <SheetHeader>
+                        <SheetTitle className="text-amber-50">Journal</SheetTitle>
+                        <SheetDescription className="text-stone-400">What the mountain already wrote.</SheetDescription>
+                      </SheetHeader>
+                      <div className="max-h-[50dvh] space-y-3 overflow-y-auto px-4 pb-6">
+                        <JournalList log={state.log} />
+                        <div ref={journalEnd} />
+                      </div>
+                    </SheetContent>
+                  </Sheet>
+                  {idle && routine.length > 0 && (
+                    <Sheet open={tendOpen} onOpenChange={setTendOpen}>
+                      <SheetTrigger className="inline-flex h-8 items-center rounded-lg border border-white/20 bg-black/40 px-3 text-[0.8rem] tracking-[0.18em] text-amber-100/75 uppercase hover:border-amber-200/40 hover:text-amber-50">
+                        {atCamp ? "Your camp" : "Tend camp"}
+                      </SheetTrigger>
+                      <SheetContent
+                        side="bottom"
+                        className="max-h-[70dvh] border-white/15 bg-black/92 text-stone-100 sm:max-w-none"
+                      >
+                        <SheetHeader>
+                          <SheetTitle className="text-amber-50">{atCamp ? "Your camp" : "Tend camp"}</SheetTitle>
+                          <SheetDescription className="text-stone-400">
+                            {atCamp ? "The work of this ground." : "Small work. The mountain keeps the hours."}
+                          </SheetDescription>
+                        </SheetHeader>
+                        <div className={cn("flex flex-wrap gap-2 overflow-y-auto px-4 pb-6", atCamp && "sm:grid sm:grid-cols-2 sm:gap-2")}>
+                          {routine.map((c) => (
+                            <Button
+                              key={c.id}
+                              size="sm"
+                              variant="secondary"
+                              disabled={c.disabled}
+                              title={c.hint}
+                              className={cn("hc-choice-btn", atCamp && c.id === "camp-strike" ? "sm:col-span-2" : undefined)}
+                              onClick={() => act(c)}
+                            >
+                              {c.label}
+                            </Button>
+                          ))}
+                        </div>
+                      </SheetContent>
+                    </Sheet>
+                  )}
+                  <Sheet open={packOpen} onOpenChange={setPackOpen}>
+                    <SheetTrigger className="inline-flex h-8 items-center rounded-lg border border-white/20 bg-black/40 px-3 text-[0.8rem] tracking-[0.18em] text-amber-100/75 uppercase hover:border-amber-200/40 hover:text-amber-50 lg:hidden">
+                      Pack
+                    </SheetTrigger>
+                    <SheetContent side="bottom" className="max-h-[70dvh] overflow-y-auto border-white/15 bg-black/92 text-stone-100 sm:max-w-none">
+                      <SheetHeader>
+                        <SheetTitle className="text-amber-50">Pack</SheetTitle>
+                        <SheetDescription className="text-stone-400">What you carry and who is here.</SheetDescription>
+                      </SheetHeader>
+                      <div className="px-4 pb-6">
+                        <Status state={state} />
+                      </div>
+                    </SheetContent>
+                  </Sheet>
+                </div>
+                {travel.length > 0 && (
+                  <div className="space-y-1.5">
+                    <p className="text-[11px] tracking-[0.25em] text-amber-100/60 uppercase">Trails</p>
+                    <div className="flex flex-wrap gap-2">
+                      {travel.map((c) => (
                         <Button
                           key={c.id}
                           size="sm"
-                          variant="secondary"
-                          disabled={c.disabled}
+                          variant="outline"
                           title={c.hint}
-                          className={atCamp && c.id === "camp-strike" ? "sm:col-span-2" : undefined}
+                          className="hc-choice-btn"
                           onClick={() => act(c)}
                         >
                           {c.label}
                         </Button>
                       ))}
                     </div>
-                  </SheetContent>
-                </Sheet>
-              )}
-              {travel.length > 0 && (
-                <div className="space-y-2">
-                  <p className="text-[11px] tracking-[0.25em] text-amber-100/60 uppercase">Trails</p>
-                  <div className="flex flex-wrap gap-2">
-                    {travel.map((c) => (
-                      <Button key={c.id} size="sm" variant="outline" title={c.hint} onClick={() => act(c)}>
-                        {c.label}
-                      </Button>
-                    ))}
                   </div>
-                </div>
-              )}
-            </div>
-          )}
-        </div>
-        <div className="rounded-xl border border-white/15 bg-black/50 p-4 backdrop-blur-md">
-          <Status state={state} />
+                )}
+              </div>
+            )}
+          </div>
+          <div className="hidden min-h-0 overflow-y-auto rounded-xl border border-white/15 bg-black/45 p-3 lg:block">
+            <Status state={state} />
+          </div>
         </div>
       </div>
       {cinema && <Cinema sequence={cinema} tell={tell} onDone={() => setCinema(null)} />}
