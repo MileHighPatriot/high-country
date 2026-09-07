@@ -1,10 +1,11 @@
 import { placeName } from "@/lib/game/readout";
-import type { DeathRecord, GameState, Kit, LocationId, Season } from "@/lib/game/types";
+import type { DeathRecord, GameState, Kit, LocationId, LogEntry, Season } from "@/lib/game/types";
 import { ensureWorld } from "@/lib/game/world";
 
 const SAVE_KEY = "colorado-survival-save-v1";
 const BEST_KEY = "colorado-survival-best-v1";
 const LAST_KEY = "colorado-survival-last-v1";
+const SLIM_LOG = 12;
 
 export interface CampaignMeta {
   name: string;
@@ -30,6 +31,14 @@ export function campaignLine(meta: Pick<CampaignMeta, "name" | "daysSurvived" | 
   return `Day ${meta.daysSurvived} · ${placeName(meta.locationId)} · ${meta.name}`;
 }
 
+function keepLog(log: LogEntry[], keep: number): LogEntry[] {
+  if (keep <= 0 || log.length <= keep) return log;
+  const opening = log[0];
+  const rest = log.slice(-(keep - 1));
+  if (opening && rest[0]?.id !== opening.id) return [opening, ...rest];
+  return rest;
+}
+
 export function hydrateGame(parsed: GameState): GameState {
   const next: GameState = {
     ...parsed,
@@ -42,6 +51,7 @@ export function hydrateGame(parsed: GameState): GameState {
     campfireHours: parsed.campfireHours ?? (parsed.campfire ? 4 : 0),
     world: parsed.world ?? null,
     waitScene: null,
+    log: Array.isArray(parsed.log) ? parsed.log : [],
   };
   return ensureWorld(next);
 }
@@ -57,8 +67,12 @@ export function isLiveSave(value: unknown): value is GameState {
   return true;
 }
 
-export function serializeGame(state: GameState): string {
-  return JSON.stringify({ ...state, waitScene: null });
+export function serializeGame(state: GameState, logKeep = 0): string {
+  return JSON.stringify({
+    ...state,
+    waitScene: null,
+    log: keepLog(state.log ?? [], logKeep),
+  });
 }
 
 export function parseGame(raw: string): GameState | null {
@@ -76,15 +90,39 @@ export function exportFilename(state: Pick<GameState, "name" | "daysSurvived">):
   return `high-country-${who}-day-${state.daysSurvived}.json`;
 }
 
-export function loadGame(): GameState | null {
+function storageGet(key: string): string | null {
   if (typeof window === "undefined") return null;
   try {
-    const raw = localStorage.getItem(SAVE_KEY);
-    if (!raw) return null;
-    return parseGame(raw);
+    return localStorage.getItem(key);
   } catch {
     return null;
   }
+}
+
+function storageSet(key: string, value: string): boolean {
+  if (typeof window === "undefined") return false;
+  try {
+    localStorage.setItem(key, value);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function storageRemove(key: string): boolean {
+  if (typeof window === "undefined") return false;
+  try {
+    localStorage.removeItem(key);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export function loadGame(): GameState | null {
+  const raw = storageGet(SAVE_KEY);
+  if (!raw) return null;
+  return parseGame(raw);
 }
 
 export function loadCampaignMeta(): CampaignMeta | null {
@@ -93,35 +131,61 @@ export function loadCampaignMeta(): CampaignMeta | null {
   return campaignMetaFrom(game);
 }
 
-export function saveGame(state: GameState) {
-  if (typeof window === "undefined") return;
+export function saveGame(state: GameState): boolean {
+  if (typeof window === "undefined") return false;
   if (state.dead) {
-    localStorage.removeItem(SAVE_KEY);
-    localStorage.setItem(LAST_KEY, JSON.stringify(state.dead));
+    storageRemove(SAVE_KEY);
+    const lastOk = storageSet(LAST_KEY, JSON.stringify(state.dead));
     const best = loadBest();
     if (state.daysSurvived > best) {
-      localStorage.setItem(BEST_KEY, String(state.daysSurvived));
+      storageSet(BEST_KEY, String(state.daysSurvived));
     }
-    return;
+    return lastOk;
   }
-  localStorage.setItem(SAVE_KEY, serializeGame(state));
+  if (storageSet(SAVE_KEY, serializeGame(state))) return true;
+  if (storageSet(SAVE_KEY, serializeGame(state, SLIM_LOG))) return true;
+  return false;
+}
+
+export function downloadGame(state: GameState): boolean {
+  if (typeof window === "undefined" || typeof document === "undefined") return false;
+  try {
+    const blob = new Blob([serializeGame(state)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = exportFilename(state);
+    a.rel = "noopener";
+    a.style.display = "none";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export function keepWalk(state: GameState): { saved: boolean; downloaded: boolean } {
+  return {
+    saved: saveGame(state),
+    downloaded: downloadGame(state),
+  };
 }
 
 export function clearSave() {
-  if (typeof window === "undefined") return;
-  localStorage.removeItem(SAVE_KEY);
+  storageRemove(SAVE_KEY);
 }
 
 export function loadBest(): number {
-  if (typeof window === "undefined") return 0;
-  return Number(localStorage.getItem(BEST_KEY) || 0);
+  return Number(storageGet(BEST_KEY) || 0);
 }
 
 export function loadLastDeath(): DeathRecord | null {
-  if (typeof window === "undefined") return null;
+  const raw = storageGet(LAST_KEY);
+  if (!raw) return null;
   try {
-    const raw = localStorage.getItem(LAST_KEY);
-    if (!raw) return null;
     return JSON.parse(raw) as DeathRecord;
   } catch {
     return null;

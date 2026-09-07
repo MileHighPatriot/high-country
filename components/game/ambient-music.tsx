@@ -13,7 +13,11 @@ export function AmbientMusic() {
   const rafRef = useRef<number>(0);
 
   useEffect(() => {
-    if (localStorage.getItem(MUTE_KEY) === "1") setMuted(true);
+    try {
+      if (localStorage.getItem(MUTE_KEY) === "1") setMuted(true);
+    } catch {
+      /* private mode */
+    }
   }, []);
 
   useEffect(() => {
@@ -68,7 +72,11 @@ export function AmbientMusic() {
   function toggle() {
     const next = !muted;
     setMuted(next);
-    localStorage.setItem(MUTE_KEY, next ? "1" : "0");
+    try {
+      localStorage.setItem(MUTE_KEY, next ? "1" : "0");
+    } catch {
+      /* private mode */
+    }
     const el = audioRef.current;
     if (!el) return;
     el.muted = next;
@@ -84,7 +92,7 @@ export function AmbientMusic() {
       <button
         type="button"
         onClick={toggle}
-        className="fixed bottom-3 left-3 z-50 rounded-full border border-white/20 bg-black/55 px-3 py-1.5 text-[11px] tracking-widest text-amber-100/80 uppercase backdrop-blur-sm hover:border-amber-200/50 hover:text-amber-50"
+        className="fixed top-3 right-3 z-50 rounded-full border border-white/20 bg-black/55 px-3 py-1.5 text-[11px] tracking-widest text-amber-100/80 uppercase backdrop-blur-sm hover:border-amber-200/50 hover:text-amber-50"
       >
         {muted ? "Music off" : "Music"}
       </button>

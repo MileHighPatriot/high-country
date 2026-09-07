@@ -35,6 +35,27 @@ assert(exportFilename(live).startsWith("high-country-ward-day-"), exportFilename
 assert(parseGame("not json") == null, "bad json");
 assert(parseGame(JSON.stringify({ name: "Ward", locationId: "high-camp" })) == null, "incomplete json");
 
+const padded = {
+  ...live,
+  log: Array.from({ length: 20 }, (_, i) => ({
+    id: `beat-${i}`,
+    text: `Hour ${i}`,
+    daysSurvived: 1,
+    hour: i,
+    locationId: live.locationId,
+  })),
+};
+const slim = parseGame(serializeGame(padded, 8));
+assert(slim, "slim serialize parses");
+assert(slim.log.length <= 8, `slim log should be short, got ${slim.log.length}`);
+assert(slim.log[0]?.id === "beat-0", "slim keep still holds the opening line");
+assert(JSON.parse(serializeGame(live)).waitScene == null, "default serialize drops wait");
+
+const missingLog = JSON.parse(serializeGame(live)) as ReturnType<typeof createGame>;
+delete (missingLog as { log?: unknown }).log;
+const revivedLog = hydrateGame(missingLog as ReturnType<typeof createGame>);
+assert(Array.isArray(revivedLog.log), "missing log hydrates to an array");
+
 console.log("save ok", {
   line: campaignLine(live),
   file: exportFilename(live),
