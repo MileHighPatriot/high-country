@@ -23,7 +23,7 @@ export function Cinema({
 }) {
   const [beat, setBeat] = useState(0);
   const [showCard, setShowCard] = useState(false);
-  const skippable = useRef(false);
+  const skippable = useRef(true);
   const done = useRef(false);
   const onDoneRef = useRef(onDone);
   onDoneRef.current = onDone;
@@ -38,16 +38,12 @@ export function Cinema({
     done.current = false;
     setBeat(0);
     setShowCard(false);
-    skippable.current = false;
+    skippable.current = true;
     const music = sequence.music ?? "swell";
     window.dispatchEvent(new CustomEvent("hc-cinema-music", { detail: { mode: music } }));
-    const arm = window.setTimeout(() => {
-      skippable.current = true;
-    }, 350);
     const card = window.setTimeout(() => setShowCard(true), 900);
     const cap = window.setTimeout(finish, sequence.duration + 400);
     return () => {
-      window.clearTimeout(arm);
       window.clearTimeout(card);
       window.clearTimeout(cap);
       window.dispatchEvent(new CustomEvent("hc-cinema-music", { detail: { mode: "restore" } }));
