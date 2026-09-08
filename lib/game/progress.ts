@@ -76,6 +76,8 @@ export function packLimitsFor(extras: string[]): Record<CampStowItem, number> {
     firewood: PACK_LIMITS.firewood + Math.min(2, n),
     pelts: PACK_LIMITS.pelts + n,
     powder: PACK_LIMITS.powder + n,
+    logs: PACK_LIMITS.logs + n,
+    stone: PACK_LIMITS.stone + Math.min(2, n),
   };
 }
 

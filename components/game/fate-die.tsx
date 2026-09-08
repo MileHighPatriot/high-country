@@ -66,6 +66,14 @@ export function FateDie({
   const landY = -face.ay;
   const need = needOnDie(pending);
 
+  const rollKey = `${pending.label}|${pending.trait}|${pending.dc}|${pending.optionId ?? ""}`;
+
+  useEffect(() => {
+    settled.current = false;
+    cast.current = pending.d20 != null;
+    setPhase(pending.d20 != null ? "landed" : "idle");
+  }, [rollKey]);
+
   useEffect(() => {
     if (pending.d20 != null && phase === "idle" && cast.current) {
       setPhase("rolling");
@@ -153,6 +161,16 @@ export function FateDie({
               {pending.penalty ? ` − ${pending.penalty}` : ""} = {total} vs {pending.dc}
               {success ? " — you hold." : " — it takes you."}
             </p>
+            <Button
+              size="sm"
+              className="mt-3"
+              onClick={() => {
+                settled.current = true;
+                onSettledRef.current();
+              }}
+            >
+              Continue
+            </Button>
           </div>
         )}
 

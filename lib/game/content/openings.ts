@@ -41,7 +41,7 @@ export const OPENINGS: OpeningDef[] = [
         fireRing: true,
         leanTo: false,
         smoke: 1,
-        cache: { rations: 0, water: 0, firewood: 1, pelts: 0, powder: 0, extras: [] },
+        cache: { rations: 0, water: 0, firewood: 1, pelts: 0, powder: 0, logs: 0, stone: 0, extras: [] },
       }),
     }),
   },

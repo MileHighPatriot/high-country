@@ -45,6 +45,16 @@ import { pickOpening } from "@/lib/game/content/openings";
 import { packCap, practiceSkill, skilledDc } from "@/lib/game/progress";
 import { deathSentence, JOURNAL_KEEP, trailHours } from "@/lib/game/readout";
 import { attemptCopy, planAttempt } from "@/lib/game/attempt";
+import {
+  chopBonus,
+  craftTool,
+  finishRaise,
+  hasTool,
+  maybeWreckHomestead,
+  startRaise,
+  stoneGround,
+  workById,
+} from "@/lib/game/homestead";
 import { isLiveTalk, liveTalkEncounter } from "@/lib/game/talk";
 import { peopleAt, placePerson, seedWorld, syncPresence, tickWorldHour } from "@/lib/game/world";
 import { withBase } from "@/lib/paths";
@@ -547,6 +557,8 @@ function applyOutcome(state: GameState, outcome: Outcome): GameState {
         text: node.text,
         choices: node.choices,
       });
+    } else {
+      next = { ...next, activeEncounterId: null };
     }
   }
   if (outcome.followUpEncounter && !next.dead && !next.skirmish) {
@@ -828,6 +840,8 @@ export function createGame(name: string, kit: Kit): GameState {
     firewood: 2,
     pelts: 0,
     powder: 2,
+    logs: 0,
+    stone: 0,
     knife: true,
     rifle: true,
     coat: false,
@@ -931,6 +945,7 @@ export function createGame(name: string, kit: Kit): GameState {
 }
 
 function resolveEncounterChoice(state: GameState, optionId: string): GameState {
+  if (optionId === "__leave__") return { ...state, activeEncounterId: null, pendingRoll: null };
   const enc = getActiveEncounter(state);
   if (!enc) return { ...state, activeEncounterId: null, pendingRoll: null };
   const option = enc.choices.find((c) => c.id === optionId);
@@ -945,6 +960,7 @@ function resolveEncounterChoice(state: GameState, optionId: string): GameState {
 
 function resolveChoice(state: GameState, option: EncounterChoice, closeEncounter: boolean): GameState {
   const keepTalk = Boolean(option.outcome?.nextDialogue || option.success?.nextDialogue || option.fail?.nextDialogue);
+  const prevEnc = state.activeEncounterId;
   let next = closeEncounter && !keepTalk ? { ...state, activeEncounterId: null } : state;
   if (option.check) {
     const rolled = rollCheck(next, option.check.trait, option.check.dc);
@@ -952,10 +968,17 @@ function resolveChoice(state: GameState, option: EncounterChoice, closeEncounter
     const branch = rolled.roll.success ? option.success : option.fail;
     next = appendLog(next, rollLine(rolled.roll), rolled.roll);
     if (branch) next = applyOutcome(next, branch);
-    return next;
+    return releaseTalk(next, keepTalk, prevEnc);
   }
   if (option.outcome) next = applyOutcome(next, option.outcome);
-  return next;
+  return releaseTalk(next, keepTalk, prevEnc);
+}
+
+/** If a talk beat promised another node and it never opened, drop the encounter so the dock is not empty. */
+function releaseTalk(state: GameState, keepTalk: boolean, prevEnc: string | null | undefined): GameState {
+  if (!keepTalk) return state;
+  if (state.activeEncounterId && state.activeEncounterId !== prevEnc) return state;
+  return { ...state, activeEncounterId: null };
 }
 
 function fallbackLine(person: (typeof CHARACTERS)[number], tags: string[]): string {
@@ -1295,6 +1318,9 @@ function strikeCopy(state: GameState, leftBehind: boolean, jobNote: string): str
 }
 
 function pitchCamp(state: GameState): GameState {
+  if (state.camp?.locked) {
+    return appendLog(state, "The platform already chose. This is not a second homestead.");
+  }
   if (state.camp) {
     return appendLog(state, "You already have a camp. Pull those stakes before you claim another bench.");
   }
@@ -1350,6 +1376,9 @@ function finishWait(state: GameState): GameState {
   if (state.weather === "wind" && rng() < 0.22) next.weather = "clear";
   else if (state.weather === "storm" && rng() < 0.18) next.weather = "wind";
   else if (state.weather === "clear" && rng() < 0.08) next.weather = pickWeather(next.season, rng);
+  const wrecked = maybeWreckHomestead(next, rng);
+  next = wrecked.state;
+  if (wrecked.line) next = appendLog(next, wrecked.line);
   next = appendLog(next, waitFlavor(next));
   const newcomers = peopleAt(next).filter((p) => !before.has(p.id) && p.id !== next.companionId);
   if (next.companionId) {
@@ -1435,6 +1464,17 @@ function strikeCamp(state: GameState): GameState {
   if (!atOwnCamp(state) || !state.camp) {
     if (state.camp) return appendLog(state, "Your camp is not this ground. Walk there if you mean to pull stakes.");
     return appendLog(state, "There is no camp to strike. Stones, if any, belong to the last man.");
+  }
+  if (state.camp.locked) {
+    const camp = cloneCamp(state.camp);
+    let inv: Inventory = { ...state.inventory, extras: [...state.inventory.extras] };
+    const packed = packLeftover(inv, camp.cache);
+    camp.cache = packed.cache;
+    const next: GameState = { ...state, inventory: packed.inv, camp };
+    return appendLog(
+      advanceTime(next, 1),
+      "The platform has claimed this bench. You pack what fits. The compound stays. Ravens will file on anything you left in the open.",
+    );
   }
   const camp = cloneCamp(state.camp);
   let inv: Inventory = { ...state.inventory, extras: [...state.inventory.extras] };
@@ -1706,13 +1746,13 @@ function startCampJob(state: GameState, kind: CampJob["kind"]): GameState {
     payload,
   };
   next.camp!.jobs = [...next.camp!.jobs, job];
-  const line = {
+  const lines: Record<string, string> = {
     "dry-meat": "You hang two rations on the rack. Sixteen hours, if the ravens file no appeal.",
     "bank-coals": "You bury the red eye under ash. Morning will be less of a thief.",
     "set-snares": "Wire off camp, baited with hope, which is poor bait. Twelve hours.",
     "smoke-hide": "A pelt on poles. Smoke takes it the way a lung takes air. The smell is a letter.",
-  }[kind];
-  next = appendLog(advanceTime(next, 1), line);
+  };
+  next = appendLog(advanceTime(next, 1), lines[kind] ?? "You start the work and leave it to the hours.");
   if (kind === "smoke-hide") next = maybeRipple(next, "smoke", 0.4);
   return next;
 }
@@ -1759,13 +1799,19 @@ function collectCampJob(state: GameState, id: string): GameState {
       text = "Empty loops. A feather. The suggestion of a joke. You walk back to the ring.";
     }
   } else {
-    if (!next.inventory.extras.includes("smoked-hide")) next.inventory.extras.push("smoked-hide");
-    next.camp = addCampExtra(next.camp!, "smoked-hide");
-    text = "The hide has taken the smoke. You roll it. Warmth is a smaller country and you have bought a corner.";
-    if (next.presentCharacterId) {
-      next.standing = { ...next.standing };
-      next.standing[next.presentCharacterId] = (next.standing[next.presentCharacterId] ?? 0) + 1;
-      text += " You could have gifted it. You keep it. They notice anyway.";
+    const raised = workById(job.kind);
+    if (raised) {
+      next.camp = finishRaise(next, raised.id).camp!;
+      text = raised.done;
+    } else {
+      if (!next.inventory.extras.includes("smoked-hide")) next.inventory.extras.push("smoked-hide");
+      next.camp = addCampExtra(next.camp!, "smoked-hide");
+      text = "The hide has taken the smoke. You roll it. Warmth is a smaller country and you have bought a corner.";
+      if (next.presentCharacterId) {
+        next.standing = { ...next.standing };
+        next.standing[next.presentCharacterId] = (next.standing[next.presentCharacterId] ?? 0) + 1;
+        text += " You could have gifted it. You keep it. They notice anyway.";
+      }
     }
   }
   next = appendLog(advanceTime(next, 1), text);
@@ -1941,6 +1987,47 @@ export function applyAction(state: GameState, action: GameAction): GameState {
         advanceTime(gained.state, 2),
         withLeftoverNote("You break dead limbs until your shoulders argue. Two armfuls.", gained.note),
       );
+    }
+    case "gatherLogs": {
+      const loc = LOCATION_BY_ID[state.locationId];
+      if (!loc?.tags.includes("wood")) return appendLog(state, "This ground does not owe you a tree.");
+      const dc = skilledDc(state, "camp", hasTool(state, "axe") ? 11 : 14);
+      const armed = armActionDie(state, "Drop a tree", "hands", dc, { type: "gatherLogs" });
+      if (armed.kind === "armed") return armed.state;
+      const roll = armed.roll;
+      let next = appendLog(armed.state, rollLine(roll, "Chop"), roll);
+      const n = (roll.success ? 2 : 1) + chopBonus(state);
+      const gained = addToPack(next, "logs", n);
+      next = gained.state;
+      return appendLog(
+        advanceTime(next, 3),
+        withLeftoverNote(
+          roll.success
+            ? `The tree comes down. ${n} logs, paid in shoulders.`
+            : `A poor fall. ${n} log${n === 1 ? "" : "s"} and a hatred of knots.`,
+          gained.note,
+        ),
+      );
+    }
+    case "gatherStone": {
+      if (!stoneGround(state)) return appendLog(state, "This ground does not owe you stone.");
+      const gained = addToPack(state, "stone", 2);
+      return appendLog(
+        advanceTime(gained.state, 2),
+        withLeftoverNote("You pry stone until the wrists file a complaint. Two rocks that will remember being mountains.", gained.note),
+      );
+    }
+    case "craftTool": {
+      const made = craftTool(state, action.tool);
+      if ("error" in made) return appendLog(state, made.error);
+      return appendLog(advanceTime(made.state, 3), made.text);
+    }
+    case "raise": {
+      const started = startRaise(state, action.work);
+      if ("error" in started) return appendLog(state, started.error);
+      let next = started.state;
+      next = withPractice(next, "camp", true);
+      return appendLog(advanceTime(next, started.hours), started.text);
     }
     case "wait":
       return beginWait(state);
@@ -2199,6 +2286,8 @@ export function applyAction(state: GameState, action: GameAction): GameState {
       });
       return maybeRipple(next, "search", roll.success ? 0.22 : 0.12);
     }
+    default:
+      return state;
   }
 }
 
@@ -2208,7 +2297,16 @@ function asHero(choice: Choice): Choice {
 
 export function getChoices(state: GameState): Choice[] {
   if (state.dead) return [];
-  if (state.waitScene) return [];
+  if (state.waitScene) {
+    return [
+      asHero({
+        id: "wake",
+        label: "Wake",
+        hint: "The hours still pass",
+        action: { type: "finishWait" },
+      }),
+    ];
+  }
   if (state.skirmish) {
     return [
       asHero({ id: "fire", label: "Aim / fire", hint: "Eye, costs powder", action: { type: "skirmish", move: "fire" } }),
@@ -2249,6 +2347,16 @@ export function getChoices(state: GameState): Choice[] {
   if (state.activeEncounterId) {
     const enc = getActiveEncounter(state);
     if (!enc) return campChoices(state);
+    if (!enc.choices.length) {
+      return [
+        asHero({
+          id: "step-back",
+          label: "Step back",
+          hint: "This hour has no more talk",
+          action: { type: "encounterChoice", optionId: "__leave__" },
+        }),
+      ];
+    }
     return enc.choices.map((c) => {
       const afford = choiceAffordable(state, c);
       const cost = inventoryCost(c.outcome ?? c.success);

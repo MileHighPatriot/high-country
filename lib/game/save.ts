@@ -1,5 +1,6 @@
 import { placeName } from "@/lib/game/readout";
 import type { DeathRecord, GameState, Kit, LocationId, Season } from "@/lib/game/types";
+import { hydrateCampSite } from "@/lib/game/homestead";
 import { ensureWorld } from "@/lib/game/world";
 
 const SAVE_KEY = "colorado-survival-save-v1";
@@ -33,7 +34,12 @@ export function campaignLine(meta: Pick<CampaignMeta, "name" | "daysSurvived" | 
 export function hydrateGame(parsed: GameState): GameState {
   const next: GameState = {
     ...parsed,
-    camp: parsed.camp ?? null,
+    camp: parsed.camp ? hydrateCampSite(parsed.camp) : null,
+    inventory: {
+      ...parsed.inventory,
+      logs: parsed.inventory.logs ?? 0,
+      stone: parsed.inventory.stone ?? 0,
+    },
     memories: parsed.memories ?? {},
     openingId: parsed.openingId ?? "legacy",
     skills: parsed.skills ?? {},

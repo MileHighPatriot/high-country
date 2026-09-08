@@ -1,4 +1,5 @@
 import { accessibleCount, campMenuChoices } from "@/lib/game/camp";
+import { homesteadChoices, stoneGround, toolChoices } from "@/lib/game/homestead";
 import { CHARACTER_BY_ID } from "@/lib/game/content/characters";
 import { LOCATION_BY_ID } from "@/lib/game/content/locations";
 import { trailChip } from "@/lib/game/readout";
@@ -896,7 +897,25 @@ export function campChoices(state: GameState): Choice[] {
     if (blizzard && !state.campfire) must.push(wood);
     else if (state.inventory.firewood < 2) good.push(wood);
     else if (rng() < (woodHard ? 0.35 : 0.55)) flavor.push(wood);
+    good.push({
+      id: "logs",
+      label: "Drop a tree",
+      hint: "Hands · logs",
+      action: { type: "gatherLogs" },
+      tier: "hero",
+    });
   }
+  if (stoneGround(state)) {
+    good.push({
+      id: "stone",
+      label: "Pry stone",
+      hint: "2 hours",
+      action: { type: "gatherStone" },
+      tier: "routine",
+    });
+  }
+  for (const c of toolChoices(state)) good.push(c);
+  for (const c of homesteadChoices(state)) good.push(c);
 
   const camp: Choice[] = [];
   const seen = new Set<string>();
@@ -959,6 +978,7 @@ export function hasShelter(state: GameState): boolean {
     loc?.tags.includes("shelter") ||
       state.locationId === "high-camp" ||
       state.inventory.extras.includes("snow-hole") ||
-      (state.camp?.leanTo && state.camp.locationId === state.locationId),
+      (state.camp?.leanTo && state.camp.locationId === state.locationId) ||
+      (state.camp?.roof && state.camp.locationId === state.locationId),
   );
 }
