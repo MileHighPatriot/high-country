@@ -43,6 +43,8 @@ export const CACHE_CAPS: Record<CampStowItem, number> = {
   firewood: 8,
   pelts: 10,
   powder: 12,
+  logs: 20,
+  stone: 16,
 };
 
 export const ROCK_RATION_CAP = 2;
@@ -52,7 +54,7 @@ export const NO_WOODPILE_FIREWOOD_CAP = 8;
 export const WANDERERS = ["silas-crowe", "ned-calhoun", "peggy-dunne", "jean-baptiste"] as const;
 
 export function emptyCache(): CampCache {
-  return { rations: 0, water: 0, firewood: 0, pelts: 0, powder: 0, extras: [] };
+  return { rations: 0, water: 0, firewood: 0, pelts: 0, powder: 0, logs: 0, stone: 0, extras: [] };
 }
 
 export function emptyCamp(locationId: LocationId, opts: Partial<CampSite> = {}): CampSite {
@@ -68,6 +70,15 @@ export function emptyCamp(locationId: LocationId, opts: Partial<CampSite> = {}):
     cache,
     jobs: opts.jobs?.map((j) => ({ ...j })) ?? [],
     smoke: opts.smoke ?? 0,
+    locked: opts.locked ?? false,
+    platform: opts.platform ?? false,
+    walls: opts.walls ?? { wind: false, creek: false, timber: false, pass: false },
+    roof: opts.roof ?? false,
+    door: opts.door ?? false,
+    stove: opts.stove ?? false,
+    addons: opts.addons ? [...opts.addons] : [],
+    interiors: opts.interiors ? [...opts.interiors] : [],
+    wrecked: opts.wrecked ? [...opts.wrecked] : [],
   };
 }
 
@@ -76,6 +87,10 @@ export function cloneCamp(camp: CampSite): CampSite {
     ...camp,
     cache: { ...camp.cache, extras: [...camp.cache.extras] },
     jobs: camp.jobs.map((j) => ({ ...j })),
+    walls: camp.walls ? { ...camp.walls } : { wind: false, creek: false, timber: false, pass: false },
+    addons: [...(camp.addons ?? [])],
+    interiors: [...(camp.interiors ?? [])],
+    wrecked: [...(camp.wrecked ?? [])],
   };
 }
 
@@ -217,24 +232,30 @@ export function removeCampExtra(camp: CampSite, extra: string): CampSite {
 }
 
 export function jobLabel(kind: CampJobKind, ready = false): string {
-  if (ready) {
-    return {
-      "dry-meat": "Take the jerky off the rack",
-      "bank-coals": "Take the banked coals",
-      "set-snares": "Walk the snare line",
-      "smoke-hide": "Take the smoked hide",
-    }[kind];
-  }
-  return {
+  const readyMap: Partial<Record<CampJobKind, string>> = {
+    "dry-meat": "Take the jerky off the rack",
+    "bank-coals": "Take the banked coals",
+    "set-snares": "Walk the snare line",
+    "smoke-hide": "Take the smoked hide",
+  };
+  const startMap: Partial<Record<CampJobKind, string>> = {
     "dry-meat": "Hang meat to dry",
     "bank-coals": "Bank coals under ash",
     "set-snares": "Set snares off camp",
     "smoke-hide": "Smoke a hide",
-  }[kind];
+  };
+  if (ready) return readyMap[kind] ?? `Finish ${kind.replace(/-/g, " ")}`;
+  return startMap[kind] ?? `Raise ${kind.replace(/-/g, " ")}`;
 }
 
 export function jobHours(kind: CampJobKind): number {
-  return { "dry-meat": 16, "bank-coals": 8, "set-snares": 12, "smoke-hide": 20 }[kind];
+  const hours: Partial<Record<CampJobKind, number>> = {
+    "dry-meat": 16,
+    "bank-coals": 8,
+    "set-snares": 12,
+    "smoke-hide": 20,
+  };
+  return hours[kind] ?? 12;
 }
 
 export function readyJobs(camp: CampSite | null | undefined): CampJob[] {
@@ -346,6 +367,8 @@ export function stowLabel(item: CampStowItem, pit: boolean): string {
   if (item === "water") return pit ? "Stow water in the pit" : "Leave water at camp";
   if (item === "firewood") return "Stack wood on the pile";
   if (item === "pelts") return "Stow pelts in the cache";
+  if (item === "logs") return "Stack logs at camp";
+  if (item === "stone") return "Stack stone at camp";
   return "Stow powder in the pit";
 }
 
@@ -354,6 +377,8 @@ export function takeLabel(item: CampStowItem): string {
   if (item === "water") return "Take water from camp";
   if (item === "firewood") return "Take wood from camp";
   if (item === "pelts") return "Take pelts from camp";
+  if (item === "logs") return "Take logs from camp";
+  if (item === "stone") return "Take stone from camp";
   return "Take powder from camp";
 }
 
@@ -371,7 +396,7 @@ export function buildLabel(piece: CampPiece): string {
 function storageActs(state: GameState, rng: () => number): Choice[] {
   if (!atOwnCamp(state) || !state.camp) return [];
   const camp = state.camp;
-  const items: CampStowItem[] = ["rations", "water", "firewood", "pelts", "powder"];
+  const items: CampStowItem[] = ["rations", "water", "firewood", "pelts", "powder", "logs", "stone"];
   const stows: Choice[] = [];
   const takes: Choice[] = [];
   for (const item of items) {
@@ -529,8 +554,8 @@ export function campHotspots(state: GameState): Choice[] {
   }
   spots.push({
     id: "camp-strike",
-    label: "Strike camp",
-    hint: "2 hours · pack what fits",
+    label: camp.locked ? "Walk off the compound" : "Strike camp",
+    hint: camp.locked ? "The buildings stay" : "2 hours · pack what fits",
     action: { type: "strikeCamp" },
   });
   return spots;

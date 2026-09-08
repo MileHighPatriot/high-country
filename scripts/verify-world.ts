@@ -43,7 +43,7 @@ s.camp = {
   cachePit: false,
   dryingRack: false,
   pot: false,
-  cache: { rations: 4, water: 4, firewood: 6, pelts: 0, powder: 2, extras: [] },
+  cache: { rations: 4, water: 4, firewood: 6, pelts: 0, powder: 2, logs: 0, stone: 0, extras: [] },
   jobs: [],
   smoke: 4,
 };

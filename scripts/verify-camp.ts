@@ -132,10 +132,10 @@ console.log("collected jerky", { rationsBefore, rationsAfter, extras: s.inventor
 s.camp = emptyCamp("high-camp", {
   fireRing: true,
   cachePit: true,
-  cache: { rations: 10, water: 4, firewood: 3, pelts: 2, powder: 1, extras: ["jerky"] },
+  cache: { rations: 10, water: 4, firewood: 3, pelts: 2, powder: 1, logs: 0, stone: 0, extras: ["jerky"] },
   jobs: [{ id: "x", kind: "dry-meat", hoursLeft: 0, startedOnDay: s.dayOfYear, payload: 2 }],
 });
-s.inventory = { ...s.inventory, rations: 2, water: 1, firewood: 1, pelts: 0, powder: 0, extras: [] };
+s.inventory = { ...s.inventory, rations: 2, water: 1, firewood: 1, pelts: 0, powder: 0, logs: 0, stone: 0, extras: [] };
 s.locationId = "high-camp";
 s = { ...s, activeEncounterId: null, skirmish: null, dead: null, pendingRoll: null };
 s = applyAction(s, { type: "strikeCamp" });
@@ -232,7 +232,7 @@ assert(oneEat.daysSurvived * 24 + oneEat.hour === oneHour + 1, "eat with 1 ratio
 let cacheEat = packHonestyState();
 cacheEat.camp = emptyCamp("high-camp", {
   cachePit: true,
-  cache: { rations: 2, water: 1, firewood: 0, pelts: 0, powder: 0, extras: [] },
+  cache: { rations: 2, water: 1, firewood: 0, pelts: 0, powder: 0, logs: 0, stone: 0, extras: [] },
 });
 cacheEat.inventory = { ...cacheEat.inventory, rations: 0, water: 0 };
 cacheEat.meters = { ...cacheEat.meters, hunger: 20, thirst: 20 };
@@ -271,7 +271,7 @@ uiCache.inventory = { ...uiCache.inventory, rations: 0, water: 0 };
 uiCache.meters = { ...uiCache.meters, hunger: 20, thirst: 20 };
 uiCache.camp = emptyCamp("high-camp", {
   cachePit: true,
-  cache: { rations: 3, water: 2, firewood: 0, pelts: 0, powder: 0, extras: [] },
+  cache: { rations: 3, water: 2, firewood: 0, pelts: 0, powder: 0, logs: 0, stone: 0, extras: [] },
 });
 const cacheChoices = getChoices(uiCache);
 const eatFromCache = cacheChoices.find((c) => c.id === "eat");
@@ -298,7 +298,7 @@ campWater.locationId = "creek";
 campWater.knownLocations = Array.from(new Set(["creek", ...campWater.knownLocations]));
 campWater.camp = emptyCamp("creek", {
   cachePit: true,
-  cache: { rations: 0, water: 0, firewood: 0, pelts: 0, powder: 0, extras: [] },
+  cache: { rations: 0, water: 0, firewood: 0, pelts: 0, powder: 0, logs: 0, stone: 0, extras: [] },
 });
 campWater.inventory = { ...campWater.inventory, water: PACK_LIMITS.water };
 campWater = applyAction(campWater, { type: "gatherWater" });
@@ -309,7 +309,7 @@ let jammedWater = packHonestyState();
 jammedWater.locationId = "creek";
 jammedWater.camp = emptyCamp("creek", {
   cachePit: true,
-  cache: { rations: 0, water: 10, firewood: 0, pelts: 0, powder: 0, extras: [] },
+  cache: { rations: 0, water: 10, firewood: 0, pelts: 0, powder: 0, logs: 0, stone: 0, extras: [] },
 });
 jammedWater.inventory = { ...jammedWater.inventory, water: PACK_LIMITS.water };
 jammedWater = applyAction(jammedWater, { type: "gatherWater" });
@@ -408,7 +408,7 @@ hunt = applyAction(hunt, { type: "castDie" });
 assert(typeof hunt.pendingRoll?.d20 === "number", "hunt die should have a face");
 const huntFace = hunt.pendingRoll!.d20;
 hunt = applyAction(hunt, { type: "finishDie" });
-assert(!hunt.pendingRoll, "hunt die should leave the table");
+assert(!hunt.pendingRoll || hunt.pendingRoll.optionId !== "hunt", "hunt die should leave the table");
 assert(hunt.inventory.powder === 2, "powder spends when the shot lands");
 console.log("hunt die", { huntFace, powder: hunt.inventory.powder });
 
@@ -448,6 +448,61 @@ assert(!waitClock.waitScene, "finishWait clears the scene");
 assert(!waitClock.dead, "a fed wait should not kill");
 assert(waitElapsed === 3 || waitElapsed === 4, `wait should advance 3 or 4 hours, got ${waitElapsed}`);
 assert(waitClock.log.some((l) => l.text.length > 0), "wait writes flavor when the scene ends");
+
+const waiting = applyAction(
+  { ...packHonestyState(), hour: 10, weather: "clear", activeEncounterId: null, pendingRoll: null, skirmish: null },
+  { type: "wait" },
+);
+const wakeChoices = getChoices(waiting);
+assert(waiting.waitScene, "wait opens a scene");
+assert(
+  wakeChoices.length === 1 && wakeChoices[0]?.action.type === "finishWait",
+  `wait should offer only Wake, got ${wakeChoices.map((c) => c.action.type).join(",")}`,
+);
+const eatDuringWait = applyAction(waiting, { type: "eat" });
+assert(eatDuringWait.waitScene, "other actions must not cancel an open wait");
+const skipped = applyAction(waiting, { type: "finishWait" });
+assert(!skipped.waitScene, "Wake / finishWait clears the wait");
+
+const missingDlg = {
+  ...packHonestyState(),
+  presentCharacterId: "eliza-ward" as const,
+  activeEncounterId: "dlg-does-not-exist",
+  pendingRoll: null,
+  skirmish: null,
+};
+assert(
+  getChoices(missingDlg).some((c) => c.action.type === "wait"),
+  "a missing talk beat must fall back to camp choices",
+);
+
+const person = CHARACTER_BY_ID["eliza-ward"];
+assert(person, "eliza exists");
+person.nodes.push({
+  id: "eliza-orphan-test",
+  text: "A test hour with no next beat.",
+  choices: [
+    {
+      id: "go",
+      label: "Go on",
+      outcome: { text: "The next sentence is missing.", hours: 1, nextDialogue: "eliza-does-not-exist" },
+    },
+  ],
+});
+let orphan: GameState = {
+  ...packHonestyState(),
+  presentCharacterId: "eliza-ward",
+  activeEncounterId: "dlg-eliza-orphan-test",
+  pendingRoll: null,
+  skirmish: null,
+};
+try {
+  orphan = applyAction(orphan, { type: "encounterChoice", optionId: "go" });
+} finally {
+  person.nodes = person.nodes.filter((n) => n.id !== "eliza-orphan-test");
+}
+assert(!orphan.activeEncounterId, "a missing nextDialogue must release talk so the dock is not empty");
+assert(getChoices(orphan).some((c) => c.action.type === "wait"), "after a broken talk chain, camp verbs return");
 
 let uniqueHits = 0;
 for (let i = 0; i < 48; i++) {

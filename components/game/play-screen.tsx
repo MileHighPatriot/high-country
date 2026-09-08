@@ -42,6 +42,7 @@ import type { Choice, GameAction, GameState, Kit, LogEntry } from "@/lib/game/ty
 import { timeBand } from "@/lib/game/types";
 import { cn } from "@/lib/utils";
 import { livingTellFromState, livingTellFrostsChrome } from "@/lib/game/living-plate";
+import { dwellingLine } from "@/lib/game/homestead";
 import { getScene } from "@/lib/game/scene";
 import { peopleAt } from "@/lib/game/world";
 import { withBase } from "@/lib/paths";
@@ -81,9 +82,7 @@ function actionKey(choice: Choice) {
 }
 
 function isUrgentBeat(state: GameState) {
-  return Boolean(
-    state.dead || state.skirmish || state.pendingRoll || state.activeEncounterId || state.waitScene,
-  );
+  return Boolean(state.dead || state.skirmish || state.pendingRoll || state.activeEncounterId);
 }
 
 function JournalList({ log }: { log: LogEntry[] }) {
@@ -206,6 +205,8 @@ function Status({ state }: { state: GameState }) {
         <span>Wood {state.inventory.firewood}</span>
         <span>Pelts {state.inventory.pelts}</span>
         <span>Powder {state.inventory.powder}</span>
+        <span>Logs {state.inventory.logs ?? 0}</span>
+        <span>Stone {state.inventory.stone ?? 0}</span>
         <span>{state.inventory.coat ? "Wool coat" : "No coat"}</span>
       </div>
       {state.inventory.extras.length > 0 && (
@@ -242,8 +243,9 @@ function Status({ state }: { state: GameState }) {
       )}
       {state.camp && (
         <p className="text-xs text-amber-100/70">
-          Camp at {LOCATION_BY_ID[state.camp.locationId]?.name ?? state.camp.locationId}
+          {dwellingLine(state.camp)} at {LOCATION_BY_ID[state.camp.locationId]?.name ?? state.camp.locationId}
           {state.camp.locationId === state.locationId ? " · here" : ""}
+          {state.camp.locked ? " · locked" : ""}
           {state.camp.smoke > 0 ? ` · smoke ${state.camp.smoke}` : ""}
           {state.camp.jobs.some((j) => j.hoursLeft <= 0) ? " · work ready" : ""}
         </p>
@@ -431,10 +433,10 @@ function WaitPlay({
           : "Someone uses the hour.";
 
   return (
-    <div className="absolute inset-x-0 top-[12%] z-[20] flex justify-center px-4">
+    <div className="pointer-events-none fixed inset-x-0 bottom-36 z-[35] flex justify-center px-4 sm:bottom-40">
       <button
         type="button"
-        className="rounded-md bg-black/60 px-4 py-2 text-sm tracking-wide text-amber-100/90 hover:bg-black/75"
+        className="pointer-events-auto rounded-md bg-black/60 px-4 py-2 text-sm tracking-wide text-amber-100/90 hover:bg-black/75"
         onClick={() => {
           if (done.current) return;
           done.current = true;
@@ -594,7 +596,9 @@ export function PlayScreen() {
   const log = state.skirmish ? state.log.slice(-6) : state.log;
   const lastBeat = log.at(-1);
   const groundMoves = idle
-    ? showHero.filter((c) => c.action.type !== "wait" && c.action.type !== "travel")
+    ? showHero.filter(
+        (c) => c.action.type !== "wait" && c.action.type !== "travel" && c.action.type !== "finishWait",
+      )
     : showHero;
 
   return (
@@ -625,7 +629,8 @@ export function PlayScreen() {
           onDone={() => {
             setState((s) => {
               if (!s?.waitScene) return s;
-              const next = applyAction(s, { type: "finishWait" });
+              let next = applyAction(s, { type: "finishWait" });
+              if (next.waitScene) next = { ...s, waitScene: null };
               const seq = cinemaAfterAction(s, next);
               if (seq) window.setTimeout(() => setCinema(seq), 0);
               return next;
@@ -676,7 +681,7 @@ export function PlayScreen() {
                 <p className="mt-2 text-sm leading-relaxed text-amber-50/90">{scene.narration}</p>
               )}
             </div>
-            {state.waitScene ? null : state.pendingRoll ? (
+            {state.pendingRoll ? (
               <FateDie
                 pending={state.pendingRoll}
                 retreats={showHero}
@@ -703,7 +708,7 @@ export function PlayScreen() {
                   livingTellFrostsChrome(tell) && "hc-live-frost",
                 )}
               >
-                {idle && scene?.attemptHint && (
+                {idle && !state.waitScene && scene?.attemptHint && (
                   <form
                     className="flex gap-2"
                     onSubmit={(e) => {
@@ -726,9 +731,9 @@ export function PlayScreen() {
                     </Button>
                   </form>
                 )}
-                {idle &&
+                {(idle || state.waitScene) &&
                   showHero
-                    .filter((c) => c.action.type === "wait")
+                    .filter((c) => c.action.type === "wait" || c.action.type === "finishWait")
                     .map((c) => (
                       <Button
                         key={c.id}

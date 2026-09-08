@@ -23,8 +23,45 @@ export type EncounterTrigger =
   | "smoke";
 
 export type CampPiece = "leanTo" | "fireRing" | "woodpile" | "cachePit" | "dryingRack" | "pot";
-export type CampStowItem = "rations" | "water" | "firewood" | "pelts" | "powder";
-export type CampJobKind = "dry-meat" | "bank-coals" | "set-snares" | "smoke-hide";
+export type CampStowItem = "rations" | "water" | "firewood" | "pelts" | "powder" | "logs" | "stone";
+export type HomesteadWorkId =
+  | "platform"
+  | "wall-wind"
+  | "wall-creek"
+  | "wall-timber"
+  | "wall-pass"
+  | "roof"
+  | "door"
+  | "stove"
+  | "bunk"
+  | "loft"
+  | "shelves"
+  | "table"
+  | "latch"
+  | "floor"
+  | "shutters"
+  | "window-skin"
+  | "peg-rail"
+  | "wash-basin"
+  | "lamp-niche"
+  | "wood-shed"
+  | "storage-shed"
+  | "smokehouse"
+  | "outhouse"
+  | "garden"
+  | "rain-barrel"
+  | "filter"
+  | "spring-box"
+  | "root-cellar"
+  | "hide-stretchers"
+  | "meat-pole"
+  | "palisade"
+  | "wash-trough"
+  | "lookout"
+  | "fish-rack"
+  | "ice-cellar";
+export type CampJobKind = "dry-meat" | "bank-coals" | "set-snares" | "smoke-hide" | HomesteadWorkId;
+export type CraftTool = "axe" | "adze" | "auger";
 export type PersonNeed = "food" | "warmth" | "trade" | "shelter" | "news" | "company";
 export type PersonMood = "even" | "wary" | "friendly" | "desperate" | "angry";
 
@@ -34,6 +71,8 @@ export interface CampCache {
   firewood: number;
   pelts: number;
   powder: number;
+  logs: number;
+  stone: number;
   extras: string[];
 }
 
@@ -43,6 +82,13 @@ export interface CampJob {
   hoursLeft: number;
   startedOnDay: number;
   payload?: number;
+}
+
+export interface CampWalls {
+  wind: boolean;
+  creek: boolean;
+  timber: boolean;
+  pass: boolean;
 }
 
 export interface CampSite {
@@ -56,9 +102,27 @@ export interface CampSite {
   cache: CampCache;
   jobs: CampJob[];
   smoke: number; // 0–5
+  /** Platform (or better) has claimed this bench forever. */
+  locked?: boolean;
+  platform?: boolean;
+  walls?: CampWalls;
+  roof?: boolean;
+  door?: boolean;
+  stove?: boolean;
+  addons?: HomesteadWorkId[];
+  interiors?: HomesteadWorkId[];
+  wrecked?: HomesteadWorkId[];
 }
 
-export const PACK_LIMITS = { rations: 6, water: 4, firewood: 4, pelts: 4, powder: 8 } as const;
+export const PACK_LIMITS = {
+  rations: 6,
+  water: 4,
+  firewood: 4,
+  pelts: 4,
+  powder: 8,
+  logs: 4,
+  stone: 4,
+} as const;
 export type LocationTag = "water" | "wood" | "shelter" | "game" | "trade";
 export type DeathCause =
   | "starvation"
@@ -87,6 +151,8 @@ export interface Inventory {
   firewood: number;
   pelts: number;
   powder: number;
+  logs: number;
+  stone: number;
   knife: boolean;
   rifle: boolean;
   coat: boolean;
@@ -250,6 +316,10 @@ export type GameAction =
   | { type: "makeFire" }
   | { type: "gatherWater" }
   | { type: "gatherWood" }
+  | { type: "gatherLogs" }
+  | { type: "gatherStone" }
+  | { type: "craftTool"; tool: CraftTool }
+  | { type: "raise"; work: HomesteadWorkId }
   | { type: "hunt" }
   | { type: "fish" }
   | { type: "scout" }
@@ -298,6 +368,8 @@ export interface Outcome {
     firewood: number;
     pelts: number;
     powder: number;
+    logs: number;
+    stone: number;
   }>;
   extraAdd?: string;
   extraRemove?: string;
