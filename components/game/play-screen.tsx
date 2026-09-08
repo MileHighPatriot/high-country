@@ -1,4 +1,4 @@
-use client";
+"use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -362,7 +362,13 @@ function WaitPlay({
   const onDoneRef = useRef(onDone);
   onDoneRef.current = onDone;
 
+  function skip() {
+    done.current = true;
+    onDoneRef.current();
+  }
+
   useEffect(() => {
+    done.current = false;
     const steps: Array<"light" | "fire" | "arrival"> = ["light"];
     if (scene.fireLit) steps.push("fire");
     if (scene.arrivalId) steps.push("arrival");
@@ -371,16 +377,29 @@ function WaitPlay({
       i += 1;
       if (i >= steps.length) {
         window.clearInterval(tick);
-        if (!done.current) {
-          done.current = true;
-          onDoneRef.current();
-        }
+        if (!done.current) skip();
         return;
       }
       setPhase(steps[i]!);
     }, 2300);
-    return () => window.clearInterval(tick);
-  }, [scene]);
+    const cap = window.setTimeout(() => {
+      if (!done.current) skip();
+    }, steps.length * 2300 + 1200);
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        skip();
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.clearInterval(tick);
+      window.clearTimeout(cap);
+      window.removeEventListener("keydown", onKey);
+    };
+    // Primitive fields so a new object with the same wait does not reset the hour.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scene.hours, scene.fireLit, scene.arrivalId, scene.fireDies]);
 
   const line =
     phase === "light"
@@ -394,15 +413,11 @@ function WaitPlay({
           : "Someone uses the hour.";
 
   return (
-    <div className="absolute inset-x-0 top-[12%] z-[20] flex justify-center px-4">
+    <div className="pointer-events-none fixed inset-x-0 bottom-36 z-[35] flex justify-center px-4 sm:bottom-40">
       <button
         type="button"
-        className="rounded-md bg-black/60 px-4 py-2 text-sm tracking-wide text-amber-100/90 hover:bg-black/75"
-        onClick={() => {
-          if (done.current) return;
-          done.current = true;
-          onDoneRef.current();
-        }}
+        className="pointer-events-auto rounded-md border border-amber-100/25 bg-black/75 px-4 py-2 text-sm tracking-wide text-amber-100/90 hover:bg-black/85"
+        onClick={skip}
       >
         {line} <span className="text-stone-400">· skip</span>
       </button>
@@ -485,7 +500,12 @@ export function PlayScreen() {
   const art = state ? artFor(state) : null;
 
   function commit(prev: GameState, action: GameAction) {
-    const next = applyAction(prev, action);
+    let next: GameState = prev;
+    try {
+      next = applyAction(prev, action) ?? prev;
+    } catch {
+      next = prev.waitScene ? { ...prev, waitScene: null } : prev;
+    }
     const seq = cinemaAfterAction(prev, next);
     setState(next);
     window.clearTimeout(holdTimer.current);
@@ -601,7 +621,12 @@ export function PlayScreen() {
           onDone={() => {
             setState((s) => {
               if (!s?.waitScene) return s;
-              const next = applyAction(s, { type: "finishWait" });
+              let next: GameState = s;
+              try {
+                next = applyAction(s, { type: "finishWait" }) ?? { ...s, waitScene: null };
+              } catch {
+                next = { ...s, waitScene: null };
+              }
               const seq = cinemaAfterAction(s, next);
               if (seq) window.setTimeout(() => setCinema(seq), 0);
               return next;
@@ -682,7 +707,7 @@ export function PlayScreen() {
               </p>
             ))}
           </button>
-          {state.waitScene ? null : state.pendingRoll ? (
+          {state.pendingRoll ? (
             <FateDie
               pending={state.pendingRoll}
               retreats={showHero}
@@ -735,9 +760,9 @@ export function PlayScreen() {
                   </Button>
                 </form>
               )}
-              {idle &&
+              {(idle || state.waitScene) &&
                 showHero
-                  .filter((c) => c.action.type === "wait")
+                  .filter((c) => c.action.type === "wait" || c.action.type === "finishWait")
                   .map((c) => (
                     <Button
                       key={c.id}
@@ -761,7 +786,7 @@ export function PlayScreen() {
                         c.action.type !== "makeFire" &&
                         c.action.type !== "tendFire",
                     )
-                  : showHero
+                  : showHero.filter((c) => c.action.type !== "finishWait")
                 ).map((c) => (
                   <Button
                     key={c.id}
