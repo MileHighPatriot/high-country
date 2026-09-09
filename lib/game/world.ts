@@ -336,3 +336,14 @@ export function tickWorld(state: GameState, hours: number): GameState {
   }
   return next;
 }
+
+export function addRumor(state: GameState, line: string): GameState {
+  const text = line.trim();
+  if (!text) return state;
+  const next = ensureWorld(state);
+  const world = cloneWorld(next.world!);
+  const rumors = world.rumors.filter((r) => r !== text);
+  rumors.push(text);
+  world.rumors = rumors.slice(-8);
+  return { ...next, world };
+}
