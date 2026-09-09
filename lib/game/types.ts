@@ -272,8 +272,69 @@ export interface GameState {
   waitScene?: WaitScene | null;
   /** Living people on the range. Missing on older saves — seed from CharacterDef homes. */
   world?: WorldState | null;
+  /** Generated beat currently on the table. Missing on older saves. */
+  improvScene?: ImprovScene | null;
+  /** Recent freeform acts the mountain remembers. Missing on older saves. */
+  story?: StoryBeat[];
   dead: DeathRecord | null;
   rngSeed: number;
+}
+
+export type AttemptVector =
+  | "hunt"
+  | "watch"
+  | "scout"
+  | "talk"
+  | "trade"
+  | "craft"
+  | "endure"
+  | "sneak"
+  | "pray"
+  | "travel"
+  | "eat"
+  | "drink"
+  | "sleep"
+  | "fire"
+  | "water"
+  | "wood"
+  | "fish"
+  | "fight"
+  | "help"
+  | "steal"
+  | "give"
+  | "search"
+  | "climb"
+  | "hide"
+  | "wait"
+  | "flee"
+  | "follow"
+  | "threaten"
+  | "shelter"
+  | "cook"
+  | "camp"
+  | "inspect"
+  | "weather"
+  | "other";
+
+/** A typed act the country still holds. */
+export interface StoryBeat {
+  intent: string;
+  vector: AttemptVector;
+  locationId: LocationId;
+  dayOfYear: number;
+  hour: number;
+  success: boolean;
+  summary: string;
+}
+
+/** An encounter that exists only for this run, born from what the player typed. */
+export interface ImprovScene {
+  id: EncounterId;
+  text: string;
+  choices: EncounterChoice[];
+  characterId?: CharacterId;
+  intense?: boolean;
+  repeatable?: boolean;
 }
 
 export interface PersonLife {
