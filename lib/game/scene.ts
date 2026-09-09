@@ -1,6 +1,7 @@
 import { CHARACTER_BY_ID } from "@/lib/game/content/characters";
 import { LOCATION_BY_ID } from "@/lib/game/content/locations";
 import { hourLabel, seasonLabel, weatherLabel } from "@/lib/game/engine";
+import { storyLine } from "@/lib/game/improv";
 import type { Choice, GameState, PersonLife } from "@/lib/game/types";
 import { peopleAt } from "@/lib/game/world";
 
@@ -47,15 +48,17 @@ export function sceneNarration(state: GameState): string {
   if (state.companionId && CHARACTER_BY_ID[state.companionId]) {
     bits.push(`${CHARACTER_BY_ID[state.companionId]!.name} is walking with you.`);
   }
+  const tale = storyLine(state);
+  if (tale) bits.push(tale);
   return bits.join(" ");
 }
 
 export function getScene(state: GameState, moves: Choice[]): Scene {
-  const urgent = Boolean(state.dead || state.skirmish || state.pendingRoll || state.activeEncounterId || state.waitScene);
+  const blocked = Boolean(state.dead || state.pendingRoll || state.waitScene);
   return {
     narration: sceneNarration(state),
     peopleHere: peopleAt(state),
-    attemptHint: !urgent,
+    attemptHint: !blocked,
     moves,
   };
 }
