@@ -47,6 +47,8 @@ export function hydrateGame(parsed: GameState): GameState {
     pendingRoll: parsed.pendingRoll ?? null,
     campfireHours: parsed.campfireHours ?? (parsed.campfire ? 4 : 0),
     world: parsed.world ?? null,
+    improvScene: parsed.improvScene ?? null,
+    story: parsed.story ?? [],
     waitScene: null,
   };
   return ensureWorld(next);
