@@ -2,7 +2,9 @@
 
 Open-ended survival in the Colorado Rockies, around 1835 — after the beaver boom, before the gold rush. You wintered too high on the Front Range. There is no last day. Seasons cycle. You play until you die.
 
-Read the ground, pick a choice, keep a fire. Hunger, thirst, warmth, energy, and health all run out. Risky acts show an open d20 (Eye, Grit, Savvy, Hands). Violence is a short skirmish, not a dungeon.
+Read the ground, type what you do, or pick a choice. Hunger, thirst, warmth, energy, and health all run out. Risky acts show an open d20 (Eye, Grit, Savvy, Hands). Violence is a short skirmish, not a dungeon.
+
+Type anything in **I try**. The mountain treats it as a real act: it can take a trail, answer a person, leave a presented button behind, and write a new scene from what you said. Buttons are suggestions. You are the plot.
 
 ## Play
 
