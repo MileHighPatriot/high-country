@@ -138,7 +138,8 @@ export function TitleScreen() {
         <h1 className="font-heading text-4xl leading-tight sm:text-6xl">High Country</h1>
         <p className="max-w-xl text-base leading-relaxed text-stone-200/90 sm:text-lg">
           You wintered too high. Spring is late. There is no town coming and no last day.
-          Eat. Drink. Keep a fire. Meet who the mountain still allows. Live until you do not.
+          Eat. Drink. Keep a fire. Type what you do — the mountain will follow that, not a menu.
+          Meet who it still allows. Live until you do not.
         </p>
         <p className="text-xs tracking-wide text-stone-400">{TRAIT_LINE}</p>
         {best > 0 && (
