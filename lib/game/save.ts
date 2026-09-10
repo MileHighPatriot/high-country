@@ -48,6 +48,11 @@ export function hydrateGame(parsed: GameState): GameState {
     campfireHours: parsed.campfireHours ?? (parsed.campfire ? 4 : 0),
     world: parsed.world ?? null,
     waitScene: null,
+    storyFacts: parsed.storyFacts ?? [],
+    generatedEncounters: parsed.generatedEncounters ?? [],
+    generatedPlaces: parsed.generatedPlaces ?? [],
+    generatedPeople: parsed.generatedPeople ?? [],
+    focusFactIds: parsed.focusFactIds ?? [],
   };
   return ensureWorld(next);
 }

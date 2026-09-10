@@ -1,3 +1,4 @@
+import { locationOf, placeTitle } from "@/lib/game/atlas";
 import { LOCATION_BY_ID } from "@/lib/game/content/locations";
 import { skillStatusLine } from "@/lib/game/progress";
 import type {
@@ -29,9 +30,12 @@ export const TRAIT_BLURB: Record<Trait, string> = {
 
 export const TRAIT_LINE = "Eye see · Grit endure · Savvy read · Hands make";
 
-export function placeName(id: LocationId | undefined): string {
+export function placeName(id: LocationId | undefined, state?: GameState): string {
   if (!id) return "the mountain";
-  return LOCATION_BY_ID[id]?.name ?? id;
+  if (state) return placeTitle(state, id);
+  const stock = LOCATION_BY_ID[id]?.name;
+  if (stock) return stock;
+  return id.replace(/^place-/, "").replace(/-/g, " ");
 }
 
 export function deathCauseLabel(cause: DeathCause): string {
@@ -114,15 +118,15 @@ export type MapNode = {
 /** Places the run has named. Cursor should draw this, not invent a second list. */
 export function knownMap(state: GameState): MapNode[] {
   return state.knownLocations.map((id) => {
-    const loc = LOCATION_BY_ID[id];
+    const loc = locationOf(state, id);
     return {
       id,
-      name: loc?.name ?? id,
+      name: loc?.name ?? placeName(id, state),
       here: state.locationId === id,
       camp: state.camp?.locationId === id,
       trails: (loc?.connections ?? []).map((c) => ({
         to: c.to,
-        name: state.knownLocations.includes(c.to) ? placeName(c.to) : "Unnamed trail",
+        name: state.knownLocations.includes(c.to) ? placeName(c.to, state) : "Unnamed trail",
         hours: trailHours(state, c.hours),
         known: state.knownLocations.includes(c.to),
         trailName: c.trailName,
