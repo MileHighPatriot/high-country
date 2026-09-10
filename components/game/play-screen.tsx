@@ -708,7 +708,7 @@ export function PlayScreen() {
                   livingTellFrostsChrome(tell) && "hc-live-frost",
                 )}
               >
-                {idle && !state.waitScene && scene?.attemptHint && (
+                {scene?.attemptHint && (
                   <form
                     className="flex gap-2"
                     onSubmit={(e) => {
@@ -722,8 +722,15 @@ export function PlayScreen() {
                     <Input
                       value={intent}
                       onChange={(e) => setIntent(e.target.value)}
-                      placeholder="I try…"
-                      maxLength={80}
+                      placeholder={
+                        state.skirmish
+                          ? "I try…"
+                          : state.activeEncounterId
+                            ? "What do you do?"
+                            : "I try…"
+                      }
+                      maxLength={200}
+                      title="Type any action. The country will answer."
                       className="border-white/20 bg-black/40 text-stone-100"
                     />
                     <Button type="submit" variant="secondary" disabled={!intent.trim()}>
