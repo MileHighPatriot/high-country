@@ -111,6 +111,19 @@ function contentTokens(text: string): string[] {
     .filter((w) => w.length > 2 && !STOP.has(w));
 }
 
+/** Player's act as a title. Never "the act". */
+export function actTitle(raw: string): string {
+  let t = raw.trim().replace(/\s+/g, " ").replace(/[.?!]+$/, "");
+  t = t.replace(/^(i('ll| will| am going to| want to)?|let me|try to|i try to)\s+/i, "");
+  if (!t) t = raw.trim();
+  if (t.length > 56) t = t.slice(0, 56).replace(/\s+\S*$/, "");
+  return t || "what you did";
+}
+
+function noThe(name: string) {
+  return name.replace(/^(the|a|an)\s+/i, "");
+}
+
 export function campVerbOf(text: string): CampVerb | null {
   const line = fold(text).replace(/\.$/, "");
   if (/^(i )?(eat|chew a ration|take a bite)$/.test(line)) return "eat";
@@ -242,12 +255,24 @@ function extractObjects(line: string, raw: string): string[] {
     "fatwood",
     "snag",
     "doe",
+    "firewood",
+    "kindling",
+    "driftwood",
+    "deadwood",
+    "magpie",
+    "pebble",
   ];
   for (const c of compounds) {
     if (line.includes(c) && !found.includes(c)) found.push(c);
   }
-  const re = /\b(?:a|an|the|my|his|her|this|that)\s+([a-z]+(?:\s+[a-z]+){0,3})/g;
+  const seek = /\b(?:find|gather|get|collect|look for|search for|pick up|break|chop|fetch|hunt for|grab)\s+(?:some |any |more |the |a |an )?([a-z]+(?:\s+[a-z]+){0,3})/g;
   let m: RegExpExecArray | null;
+  while ((m = seek.exec(line))) {
+    const phrase = (m[1] ?? "").trim();
+    if (!phrase || STOP.has(phrase.split(" ")[0] ?? "")) continue;
+    if (!found.some((f) => f.includes(phrase) || phrase.includes(f))) found.push(phrase);
+  }
+  const re = /\b(?:a|an|the|my|his|her|this|that|some|any|more)\s+([a-z]+(?:\s+[a-z]+){0,3})/g;
   while ((m = re.exec(line))) {
     const phrase = (m[1] ?? "").trim();
     if (!phrase || STOP.has(phrase.split(" ")[0] ?? "")) continue;
@@ -258,7 +283,7 @@ function extractObjects(line: string, raw: string): string[] {
   }
   const song = raw.match(/\b(french song|chanson|[a-z]+ song)\b/i);
   if (song && !found.some((f) => f.includes("song"))) found.push(fold(song[1] ?? "song"));
-  return found.slice(0, 6);
+  return found.slice(0, 8);
 }
 
 function extractStunts(line: string): string[] {
@@ -267,8 +292,10 @@ function extractStunts(line: string): string[] {
     [/\bdig|\bsnow cave/, "dig"],
     [/\bdrag|\bpull/, "drag"],
     [/\bwait the blow|\bwait it out|\bwait out/, "wait-blow"],
-    [/\bcut meat|\bbutcher|\bskin|\bcarve/, "cut"],
+    [/\bcut meat|\bbutcher|\bskin/, "cut"],
+    [/\bcarve/, "carve"],
     [/\bwalk to|\bgo to|\bhead to|\bmake for/, "walk"],
+    [/\bwalk around|\blook around|\bsearch|\bfind|\bgather|\bfetch|\bcollect/, "search"],
     [/\bsing|\bsong|\bchanson/, "sing"],
     [/\bclimb/, "climb"],
     [/\baccus/, "accuse"],
@@ -276,6 +303,7 @@ function extractStunts(line: string): string[] {
     [/\bgive|\bgift/, "gift"],
     [/\bmeet|\bfind a man|\bfind a woman|\ba trapper/, "meet"],
     [/\binvent|\bside trail|\boff the (map|trail)/, "invent-trail"],
+    [/\bthrow|\btoss/, "throw"],
   ];
   for (const [re, name] of verbs) {
     if (re.test(line) && !stunts.includes(name)) stunts.push(name);
@@ -283,11 +311,21 @@ function extractStunts(line: string): string[] {
   return stunts;
 }
 
+function isWoodAsk(line: string) {
+  return /\bfirewood\b|\bkindling\b|\bdriftwood\b|\bdeadwood\b|\bdeadwood\b|\bdead (limbs|wood|branches)\b|\b(some |any |more )?(wood|timber)\b/.test(
+    line,
+  );
+}
+
+function isWaterAsk(line: string) {
+  return /\b(fill|melt).{0,20}(water|ice|tin|canteen)|\bgather water\b|\bget water\b|\bdrink from the creek\b/.test(line);
+}
+
 function parseSlots(state: GameState, text: string): Slots {
   const raw = text.trim().replace(/\s+/g, " ");
   const line = fold(raw);
   const place = findPlace(state, line);
-  const walking = /\bwalk to\b|\bgo to\b|\bhead to\b|\bmake for\b|\bi walk\b/.test(line);
+  const walking = /\bwalk to\b|\bgo to\b|\bhead to\b|\bmake for\b/.test(line);
   const inventTrail = /\bside trail\b|\boff the (map|trail)\b|\ba trail that is not\b|\binvent a .*trail/.test(line);
   let unknownPlace: string | null = null;
   if (walking && !place) {
@@ -342,7 +380,7 @@ function dieFor(slots: Slots, state: GameState): { risky: boolean; trait: Trait;
       label: obj ? `Dig the ${obj}` : "Dig a cave",
     };
   }
-  if (slots.stunts.includes("cut") || slots.objects.includes("drowned doe")) {
+  if (slots.objects.includes("drowned doe") || /\bcut meat|\bbutcher|\bskin\b/.test(fold(slots.raw))) {
     return { risky: true, trait: "hands", dc: 13, label: "Cut meat from the ice" };
   }
   if (slots.stunts.includes("climb")) {
@@ -366,7 +404,11 @@ function dieFor(slots: Slots, state: GameState): { risky: boolean; trait: Trait;
   if (slots.stunts.includes("walk") && slots.travelTo) {
     return { risky: state.weather === "blizzard", trait: "grit", dc: 13, label: `Walk to ${slots.travelName}` };
   }
-  return { risky: false, trait: "savvy", dc: 12, label: "Do it" };
+  const title = actTitle(slots.raw);
+  if (isWoodAsk(fold(slots.raw)) && (state.weather === "blizzard" || state.hour < 6 || state.hour >= 20)) {
+    return { risky: true, trait: "hands", dc: 12, label: title };
+  }
+  return { risky: false, trait: "savvy", dc: 12, label: title };
 }
 
 function extraFromGift(gift: string | null, state: GameState): string | null {
@@ -555,18 +597,18 @@ function personEncounter(person: GeneratedPerson, fact: StoryFact, extra: string
 
 function genericEncounter(facts: StoryFact[], ground: string, said: string): EncounterDef {
   const lead = facts[0];
-  const name = lead?.name ?? "what you did";
+  const name = noThe(lead?.name ?? actTitle(said));
   const id = `gm-${lead?.id ?? slug(said)}`;
   return {
     id,
     repeatable: true,
-    text: `${sentence(lead?.note ?? said)} You are still at ${ground}, and ${name} is still the hour.`,
+    text: `${sentence(lead?.note ?? said)} You are still at ${ground}. ${name} is still the hour.`,
     choices: [
       {
         id: "continue",
-        label: `Keep on with the ${name}`,
+        label: `Keep at ${name}`,
         outcome: {
-          text: `You keep on with the ${name} at ${ground}. The next hour is still that story.`,
+          text: `You keep at ${name} at ${ground}. The next hour is still that story.`,
           hours: 2,
           meters: { energy: -4 },
           followUpEncounter: id,
@@ -574,18 +616,18 @@ function genericEncounter(facts: StoryFact[], ground: string, said: string): Enc
       },
       {
         id: "wait",
-        label: `Wait here with the ${name}`,
+        label: `Wait here with ${name}`,
         outcome: {
-          text: `You wait with the ${name}. ${ground} does not hurry.`,
+          text: `You wait with ${name}. ${ground} does not hurry.`,
           hours: 3,
           followUpEncounter: id,
         },
       },
       {
         id: "leave",
-        label: `Leave the ${name} for now`,
+        label: `Leave ${name} for now`,
         outcome: {
-          text: `You leave the ${name} as a fact at ${ground}. It does not unhappen.`,
+          text: `You leave ${name} as a fact at ${ground}. It does not unhappen.`,
           hours: 1,
         },
       },
@@ -666,9 +708,18 @@ function narrate(state: GameState, slots: Slots, locName: string, success: boole
     );
   }
 
+  if (isWoodAsk(fold(slots.raw))) {
+    bits.push(`You walk ${locName} for firewood.`);
+    bits.push(
+      success
+        ? "Willow, driftwood, a dead limb that will take a spark. The pack is heavier."
+        : "The bank is stingy. You still come away with something that will burn.",
+    );
+  }
+
   if (bits.length === 0) {
     bits.push(sentence(slots.raw));
-    bits.push(`That is the hour at ${locName}.`);
+    bits.push(`The mountain answers at ${locName}. That is now a fact of this run.`);
   }
 
   for (const n of saidNouns) {
@@ -753,6 +804,40 @@ export function interpretAct(state: GameState, text: string, success: boolean): 
       locationId: locId,
       said: slots.raw,
       note: `A snow cave under the deadfall at ${ground}. The blanket is in it.`,
+      status: "present",
+      dayOfYear: state.dayOfYear,
+      hour: state.hour,
+    });
+  }
+
+  const line = fold(slots.raw);
+  if (isWoodAsk(line) && !slots.objects.includes("snow cave")) {
+    hours = Math.max(hours, 2);
+    inventory = { ...(inventory ?? {}), firewood: success ? 2 : 1 };
+    upsertFact(facts, {
+      id: factId("object", "firewood", locId),
+      kind: "object",
+      name: "firewood",
+      nouns: ["firewood", ...slots.objects],
+      locationId: locId,
+      said: slots.raw,
+      note: `Firewood taken at ${ground}. The walk for it still counts.`,
+      status: "carried",
+      dayOfYear: state.dayOfYear,
+      hour: state.hour,
+    });
+    extras.push(success ? "Two armfuls. The hour bought wood." : "One armful. The hour still bought wood.");
+  } else if (isWaterAsk(line)) {
+    hours = Math.max(hours, 1);
+    inventory = { ...(inventory ?? {}), water: success ? 2 : 1 };
+    upsertFact(facts, {
+      id: factId("act", "water", locId),
+      kind: "act",
+      name: "water",
+      nouns: ["water", ...slots.objects],
+      locationId: locId,
+      said: slots.raw,
+      note: `Water taken at ${ground}.`,
       status: "present",
       dayOfYear: state.dayOfYear,
       hour: state.hour,
@@ -917,15 +1002,15 @@ export function interpretAct(state: GameState, text: string, success: boolean): 
   }
 
   if (facts.length === 0) {
-    const name = slots.objects[0] ?? slots.stunts[0] ?? "the act";
+    const name = slots.objects[0] ?? actTitle(slots.raw);
     upsertFact(facts, {
       id: factId("act", name, locId),
       kind: "act",
       name,
-      nouns: slots.objects.length ? slots.objects : [name],
+      nouns: Array.from(new Set([...slots.objects, ...contentTokens(slots.raw).slice(0, 6)])),
       locationId: locId,
       said: slots.raw,
-      note: sentence(slots.raw),
+      note: `${sentence(slots.raw)} It happened at ${ground}.`,
       status: "present",
       dayOfYear: state.dayOfYear,
       hour: state.hour,

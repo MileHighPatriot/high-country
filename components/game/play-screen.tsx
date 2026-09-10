@@ -705,7 +705,7 @@ export function PlayScreen() {
                 <p className="mt-2 text-sm leading-relaxed text-amber-50/90">{scene.narration}</p>
               )}
             </div>
-            {!state.dead && !state.skirmish && !state.waitScene && (
+            {!state.dead && !state.skirmish && (
               <form
                 className="flex gap-2"
                 onSubmit={(e) => {
@@ -728,8 +728,8 @@ export function PlayScreen() {
                 </Button>
               </form>
             )}
-            {!state.dead && !state.skirmish && !state.waitScene && (
-              <p className="text-[10px] tracking-wide text-amber-100/45">Type the hour. Buttons are suggestions.</p>
+            {!state.dead && !state.skirmish && (
+              <p className="text-[10px] tracking-wide text-amber-100/45">Type anything. The mountain answers.</p>
             )}
             {state.pendingRoll ? (
               <FateDie
