@@ -1,3 +1,4 @@
+import { characterOf, locationOf, placeTitle } from "@/lib/game/atlas";
 import { GREET, NEED_ASK, TOPIC_LABEL, TOPIC_LINES, type TalkTopic } from "@/lib/game/content/voices";
 import { CHARACTER_BY_ID } from "@/lib/game/content/characters";
 import { LOCATION_BY_ID } from "@/lib/game/content/locations";
@@ -43,7 +44,7 @@ function rngFor(state: GameState, id: CharacterId, salt: string) {
 }
 
 export function composeGreet(state: GameState, id: CharacterId): string {
-  const person = CHARACTER_BY_ID[id];
+  const person = characterOf(state, id) ?? CHARACTER_BY_ID[id];
   const life = lifeOf(state, id);
   const rng = rngFor(state, id, "greet");
   const greets = GREET[id];
@@ -76,10 +77,10 @@ function topicReply(state: GameState, id: CharacterId, topic: TalkTopic): string
     line = `${line} Today: ${life.errand}.`;
   }
   if (topic === "trail") {
-    const loc = LOCATION_BY_ID[state.locationId];
+    const loc = locationOf(state, state.locationId);
     const edge = loc?.connections[Math.floor(rng() * (loc.connections.length || 1))];
     if (edge) {
-      const dest = LOCATION_BY_ID[edge.to]?.name ?? edge.to;
+      const dest = placeTitle(state, edge.to);
       line = `${line} They mention ${dest} like a dare.`;
     }
   }

@@ -18,8 +18,9 @@ import {
 } from "@/components/ui/sheet";
 import { campHotspots } from "@/lib/game/camp";
 import { cinemaAfterAction, type CinemaSequence } from "@/lib/game/cinema";
+import { characterOf, locationOf } from "@/lib/game/atlas";
 import { CHARACTER_BY_ID } from "@/lib/game/content/characters";
-import { LOCATION_BY_ID } from "@/lib/game/content/locations";
+import { loadGmKey, saveGmKey } from "@/lib/game/gm-model";
 import {
   applyAction,
   artFor,
@@ -174,8 +175,9 @@ function Meter({ label, value, warn }: { label: string; value: number; warn?: bo
 }
 
 function Status({ state }: { state: GameState }) {
-  const loc = LOCATION_BY_ID[state.locationId];
-  const person = state.presentCharacterId ? CHARACTER_BY_ID[state.presentCharacterId] : null;
+  const loc = locationOf(state, state.locationId);
+  const person = state.presentCharacterId ? characterOf(state, state.presentCharacterId) : null;
+  const [gmKey, setGmKey] = useState(loadGmKey);
   const meters = [
     [METER_LABELS.hunger, state.meters.hunger],
     [METER_LABELS.thirst, state.meters.thirst],
@@ -220,8 +222,8 @@ function Status({ state }: { state: GameState }) {
       {skillStatusLine(state) && (
         <p className="text-[11px] leading-snug text-amber-100/70">{skillStatusLine(state)}</p>
       )}
-      {state.companionId && CHARACTER_BY_ID[state.companionId] && (
-        <p className="text-xs text-amber-100/90">Walking with {CHARACTER_BY_ID[state.companionId]!.name}</p>
+      {state.companionId && characterOf(state, state.companionId) && (
+        <p className="text-xs text-amber-100/90">Walking with {characterOf(state, state.companionId)!.name}</p>
       )}
       {person && !state.companionId && peopleAt(state).length === 0 && (
         <p className="text-xs text-amber-100/80">Here: {person.name}</p>
@@ -229,7 +231,7 @@ function Status({ state }: { state: GameState }) {
       {peopleAt(state).length > 0 && (
         <ul className="space-y-0.5 text-[11px] text-stone-400">
           {peopleAt(state).map((p) => {
-            const n = CHARACTER_BY_ID[p.id]?.name ?? p.id;
+            const n = characterOf(state, p.id)?.name ?? p.id;
             const stand = state.standing[p.id] ?? 0;
             return (
               <li key={p.id}>
@@ -243,7 +245,7 @@ function Status({ state }: { state: GameState }) {
       )}
       {state.camp && (
         <p className="text-xs text-amber-100/70">
-          {dwellingLine(state.camp)} at {LOCATION_BY_ID[state.camp.locationId]?.name ?? state.camp.locationId}
+          {dwellingLine(state.camp)} at {locationOf(state, state.camp.locationId)?.name ?? state.camp.locationId}
           {state.camp.locationId === state.locationId ? " · here" : ""}
           {state.camp.locked ? " · locked" : ""}
           {state.camp.smoke > 0 ? ` · smoke ${state.camp.smoke}` : ""}
@@ -268,6 +270,28 @@ function Status({ state }: { state: GameState }) {
           ))}
         </div>
       )}
+      {(state.storyFacts ?? []).length > 0 && (
+        <p className="text-[11px] leading-snug text-amber-100/70">
+          {(state.storyFacts ?? [])
+            .filter((f) => f.status !== "gone")
+            .slice(0, 4)
+            .map((f) => f.name)
+            .join(" · ")}
+        </p>
+      )}
+      <label className="block space-y-1 border-t border-white/10 pt-2">
+        <span className="text-[11px] tracking-[0.25em] text-amber-100/60 uppercase">Optional mountain key</span>
+        <Input
+          type="password"
+          value={gmKey}
+          onChange={(e) => {
+            setGmKey(e.target.value);
+            saveGmKey(e.target.value);
+          }}
+          placeholder="SpaceXAI key — off is fine"
+          className="h-8 border-white/20 bg-black/40 text-xs text-stone-100"
+        />
+      </label>
       <details className="border-t border-white/10 pt-2">
         <summary className="cursor-pointer text-[11px] tracking-[0.25em] text-amber-100/60 uppercase">
           Country
@@ -301,7 +325,7 @@ function CampStage({
   const atCamp = Boolean(state.camp && state.camp.locationId === state.locationId);
   const scene = state.waitScene;
   const personId = state.presentCharacterId ?? (waiting ? scene?.arrivalId : null) ?? null;
-  const person = personId ? CHARACTER_BY_ID[personId] : null;
+  const person = personId ? characterOf(state, personId) : null;
   const talk = findChoice(pool, (c) => c.action.type === "talk");
   const fireChoice = findChoice(
     pool,
@@ -681,6 +705,32 @@ export function PlayScreen() {
                 <p className="mt-2 text-sm leading-relaxed text-amber-50/90">{scene.narration}</p>
               )}
             </div>
+            {!state.dead && !state.skirmish && !state.waitScene && (
+              <form
+                className="flex gap-2"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  const text = intent.trim();
+                  if (!text || !state) return;
+                  setIntent("");
+                  commit(state, { type: "attempt", text });
+                }}
+              >
+                <Input
+                  value={intent}
+                  onChange={(e) => setIntent(e.target.value)}
+                  placeholder="What do you do?"
+                  maxLength={400}
+                  className="border-white/20 bg-black/40 text-stone-100"
+                />
+                <Button type="submit" variant="secondary" disabled={!intent.trim()}>
+                  Do
+                </Button>
+              </form>
+            )}
+            {!state.dead && !state.skirmish && !state.waitScene && (
+              <p className="text-[10px] tracking-wide text-amber-100/45">Type the hour. Buttons are suggestions.</p>
+            )}
             {state.pendingRoll ? (
               <FateDie
                 pending={state.pendingRoll}
@@ -708,29 +758,6 @@ export function PlayScreen() {
                   livingTellFrostsChrome(tell) && "hc-live-frost",
                 )}
               >
-                {idle && !state.waitScene && scene?.attemptHint && (
-                  <form
-                    className="flex gap-2"
-                    onSubmit={(e) => {
-                      e.preventDefault();
-                      const text = intent.trim();
-                      if (!text || !state) return;
-                      setIntent("");
-                      commit(state, { type: "attempt", text });
-                    }}
-                  >
-                    <Input
-                      value={intent}
-                      onChange={(e) => setIntent(e.target.value)}
-                      placeholder="I try…"
-                      maxLength={80}
-                      className="border-white/20 bg-black/40 text-stone-100"
-                    />
-                    <Button type="submit" variant="secondary" disabled={!intent.trim()}>
-                      Try
-                    </Button>
-                  </form>
-                )}
                 {(idle || state.waitScene) &&
                   showHero
                     .filter((c) => c.action.type === "wait" || c.action.type === "finishWait")

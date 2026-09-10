@@ -272,8 +272,52 @@ export interface GameState {
   waitScene?: WaitScene | null;
   /** Living people on the range. Missing on older saves — seed from CharacterDef homes. */
   world?: WorldState | null;
+  /** Facts the run invented. Missing on older saves. */
+  storyFacts?: StoryFact[];
+  /** GM scenes for this run. Missing on older saves. */
+  generatedEncounters?: EncounterDef[];
+  /** Side trails and named ground the book does not have. */
+  generatedPlaces?: GeneratedPlace[];
+  /** People the book does not have. */
+  generatedPeople?: GeneratedPerson[];
+  /** Facts the current hour is still about. */
+  focusFactIds?: string[];
   dead: DeathRecord | null;
   rngSeed: number;
+}
+
+export type StoryFactKind = "shelter" | "object" | "person" | "place" | "act" | "trail" | "animal";
+
+export interface StoryFact {
+  id: string;
+  kind: StoryFactKind;
+  name: string;
+  nouns: string[];
+  locationId: LocationId;
+  characterId?: CharacterId;
+  said: string;
+  note: string;
+  status: "present" | "gone" | "carried";
+  dayOfYear: number;
+  hour: number;
+}
+
+export interface GeneratedPlace {
+  id: LocationId;
+  name: string;
+  blurb: string;
+  parentId: LocationId;
+  hours: number;
+  trailName: string;
+  tags: LocationTag[];
+}
+
+export interface GeneratedPerson {
+  id: CharacterId;
+  name: string;
+  blurb: string;
+  fallback: string;
+  home: LocationId[];
 }
 
 export interface PersonLife {

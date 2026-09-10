@@ -25,6 +25,28 @@ assert(parsed.waitScene == null, "wait scene does not persist");
 assert(parsed.name === "Ward", "name survives");
 assert(parsed.world && parsed.world.people["eliza-ward"], "eliza is on the range after parse");
 
+const withFacts = serializeGame({
+  ...live,
+  storyFacts: [
+    {
+      id: "animal-drowned-doe-creek",
+      kind: "animal",
+      name: "drowned doe",
+      nouns: ["drowned doe"],
+      locationId: "creek",
+      said: "cut meat",
+      note: "jammed in the ice",
+      status: "present",
+      dayOfYear: live.dayOfYear,
+      hour: live.hour,
+    },
+  ],
+  generatedPeople: [{ id: "gm-absalom-pike", name: "Absalom Pike", blurb: "owes a kettle", fallback: "He waits.", home: ["high-camp"] }],
+});
+const factsLoaded = parseGame(withFacts);
+assert(factsLoaded?.storyFacts?.some((f) => f.name === "drowned doe"), "story facts survive save");
+assert(factsLoaded?.generatedPeople?.some((p) => p.id === "gm-absalom-pike"), "generated people survive save");
+
 const old = JSON.parse(serializeGame(live)) as ReturnType<typeof createGame>;
 delete old.world;
 const revived = hydrateGame(old);

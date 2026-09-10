@@ -44,7 +44,14 @@ import { LOCATION_BY_ID } from "@/lib/game/content/locations";
 import { pickOpening } from "@/lib/game/content/openings";
 import { packCap, practiceSkill, skilledDc } from "@/lib/game/progress";
 import { deathSentence, JOURNAL_KEEP, trailHours } from "@/lib/game/readout";
-import { attemptCopy, planAttempt } from "@/lib/game/attempt";
+import { characterOf, locationOf, placeTitle } from "@/lib/game/atlas";
+import {
+  campVerbOf,
+  interpretAct,
+  matchPresentedOption,
+  playerProse,
+  type GmAct,
+} from "@/lib/game/gm";
 import {
   chopBonus,
   craftTool,
@@ -176,7 +183,7 @@ function drainForHour(state: GameState): Partial<Meters> {
   if (night) warmth += 2;
   if (coat) warmth -= 2;
   if (state.campfire) warmth -= 6;
-  const loc = LOCATION_BY_ID[state.locationId];
+  const loc = locationOf(state, state.locationId);
   if (loc?.tags.includes("shelter") || (state.camp?.leanTo && atOwnCamp(state))) warmth -= 2;
   if (state.inventory.extras.includes("dry-boots")) warmth -= 3;
   if (state.inventory.extras.includes("snow-hole")) warmth -= 3;
@@ -562,7 +569,9 @@ function applyOutcome(state: GameState, outcome: Outcome): GameState {
     }
   }
   if (outcome.followUpEncounter && !next.dead && !next.skirmish) {
-    const follow = allEncounters().find((e) => e.id === outcome.followUpEncounter);
+    const follow =
+      allEncounters().find((e) => e.id === outcome.followUpEncounter) ??
+      next.generatedEncounters?.find((e) => e.id === outcome.followUpEncounter);
     if (follow && (follow.repeatable || !next.seenEncounterIds.includes(follow.id))) {
       next = beginEncounter(next, follow);
     }
@@ -760,6 +769,8 @@ function maybeRipple(state: GameState, kind: EncounterTrigger, chance: number): 
 function getActiveEncounter(state: GameState): EncounterDef | undefined {
   const id = state.activeEncounterId;
   if (!id) return undefined;
+  const generated = state.generatedEncounters?.find((e) => e.id === id);
+  if (generated) return generated;
   const fromBook = allEncounters().find((e) => e.id === id);
   if (fromBook) return fromBook;
   if (isLiveTalk(id) && state.presentCharacterId) {
@@ -930,6 +941,11 @@ export function createGame(name: string, kit: Kit): GameState {
     skills: {},
     companionId: null,
     waitScene: null,
+    storyFacts: [],
+    generatedEncounters: [],
+    generatedPlaces: [],
+    generatedPeople: [],
+    focusFactIds: [],
     dead: null,
     rngSeed: nextSeed(seed),
   };
@@ -997,8 +1013,11 @@ function talk(state: GameState): GameState {
   if (!id) {
     return appendLog({ ...state, hour: state.hour }, "No one is here who will answer you.");
   }
-  const person = CHARACTER_BY_ID[id];
+  const person = characterOf(state, id);
   if (!person) return state;
+  if (!person.nodes.length) {
+    return beginEncounter({ ...state, presentCharacterId: id }, liveTalkEncounter(state, id));
+  }
   const mem = state.memories?.[id] ?? [];
   const fits = (n: (typeof person.nodes)[number]) => {
     if (n.seasons && !n.seasons.includes(state.season)) return false;
@@ -1022,7 +1041,7 @@ function talk(state: GameState): GameState {
 }
 
 function travel(state: GameState, to: LocationId): GameState {
-  const loc = LOCATION_BY_ID[state.locationId];
+  const loc = locationOf(state, state.locationId);
   const edge = loc?.connections.find((c) => c.to === to);
   if (!edge) return appendLog(state, "There is no trail that way from here.");
   const hours = trailHours(state, edge.hours);
@@ -1039,7 +1058,7 @@ function travel(state: GameState, to: LocationId): GameState {
   };
   next = advanceTime(next, hours);
   if (next.dead) {
-    return appendLog(next, `You try for ${LOCATION_BY_ID[to]?.name ?? to}. The trail takes more than you have.`);
+    return appendLog(next, `You try for ${placeTitle(next, to)}. The trail takes more than you have.`);
   }
   next.locationId = to;
   if (!next.knownLocations.includes(to)) next.knownLocations = [...next.knownLocations, to];
@@ -1125,7 +1144,7 @@ function sleep(state: GameState): GameState {
       next.inventory = { ...next.inventory, rations: next.inventory.rations - 1 };
       next = maybeRipple(next, "sleep", 0.75);
     } else {
-      const loc = LOCATION_BY_ID[state.locationId];
+      const loc = locationOf(state, state.locationId);
       const edge = loc?.connections[Math.floor(rng() * (loc?.connections.length ?? 1))];
       if (edge && rng() < 0.55) {
         next.locationId = edge.to;
@@ -1818,19 +1837,156 @@ function collectCampJob(state: GameState, id: string): GameState {
   return maybeRipple(next, "camp", 0.25);
 }
 
+function mergeGenerated(state: GameState, act: GmAct): GameState {
+  let next: GameState = {
+    ...state,
+    knownLocations: [...state.knownLocations],
+    storyFacts: [...(state.storyFacts ?? [])],
+    generatedEncounters: [...(state.generatedEncounters ?? [])],
+    generatedPlaces: [...(state.generatedPlaces ?? [])],
+    generatedPeople: [...(state.generatedPeople ?? [])],
+    focusFactIds: act.focusFactIds,
+  };
+  for (const fact of act.facts) {
+    const i = next.storyFacts!.findIndex((f) => f.id === fact.id);
+    if (i >= 0) next.storyFacts![i] = fact;
+    else next.storyFacts!.push(fact);
+  }
+  for (const place of act.places) {
+    if (!next.generatedPlaces!.some((p) => p.id === place.id)) next.generatedPlaces!.push(place);
+    if (!next.knownLocations.includes(place.id)) next.knownLocations.push(place.id);
+  }
+  for (const person of act.people) {
+    if (!next.generatedPeople!.some((p) => p.id === person.id)) next.generatedPeople!.push(person);
+    const at = act.relocate ?? next.locationId;
+    next = placePerson(next, person.id, at);
+    if (next.world?.people[person.id]) {
+      next = {
+        ...next,
+        world: {
+          ...next.world,
+          people: {
+            ...next.world.people,
+            [person.id]: { ...next.world.people[person.id]!, generated: true },
+          },
+        },
+      };
+    }
+  }
+  next.generatedEncounters = [
+    ...next.generatedEncounters!.filter((e) => e.id !== act.encounter.id),
+    act.encounter,
+  ];
+  if (act.rumors.length && next.world) {
+    next = { ...next, world: { ...next.world, rumors: [...next.world.rumors, ...act.rumors] } };
+  }
+  return next;
+}
+
+export function applyGmAct(state: GameState, act: GmAct, roll?: RollResult): GameState {
+  let next = mergeGenerated(
+    { ...state, activeEncounterId: null, pendingRoll: null, waitScene: null },
+    act,
+  );
+  if (roll) next = appendLog(next, rollLine(roll, act.label), roll);
+  next = applyOutcome(next, {
+    text: act.narration,
+    hours: act.hours,
+    meters: act.meters,
+    inventory: act.inventory,
+    extraAdd: act.extraAdd,
+    extraRemove: act.extraRemove,
+    standing: act.standing,
+    relocate: act.relocate,
+    presentCharacter: act.presentCharacterId,
+  });
+  if (next.dead || next.skirmish) return next;
+  return beginEncounter(next, act.encounter);
+}
+
+function resolvePresentedOwnWords(state: GameState, option: EncounterChoice, said: string): GameState {
+  const enc = getActiveEncounter(state);
+  if (!enc) return state;
+  const rewritten: EncounterChoice = {
+    ...option,
+    outcome: option.outcome ? { ...option.outcome, text: playerProse(said, null) } : undefined,
+    success: option.success ? { ...option.success, text: playerProse(said, true) } : undefined,
+    fail: option.fail ? { ...option.fail, text: playerProse(said, false) } : undefined,
+  };
+  const clone: EncounterDef = {
+    ...enc,
+    id: `gm-own-${enc.id}`,
+    choices: enc.choices.map((c) => (c.id === option.id ? rewritten : c)),
+  };
+  const next: GameState = {
+    ...state,
+    generatedEncounters: [...(state.generatedEncounters ?? []).filter((e) => e.id !== clone.id), clone],
+    activeEncounterId: clone.id,
+  };
+  return resolveEncounterChoice(next, option.id);
+}
+
+function resolveAttempt(state: GameState, text: string): GameState {
+  const trimmed = text.trim();
+  if (!trimmed) return appendLog(state, "You stand there with an unfinished sentence.");
+  const verb = campVerbOf(trimmed);
+  if (verb) {
+    return applyAction({ ...state, activeEncounterId: null, pendingRoll: null, waitScene: null }, { type: verb });
+  }
+  const enc = getActiveEncounter(state);
+  if (enc) {
+    const match = matchPresentedOption(trimmed, enc.choices);
+    if (match) return resolvePresentedOwnWords(state, match, trimmed);
+  }
+  const pending = state.pendingRoll;
+  const resuming = pending?.resume?.type === "attempt" && pending.d20 != null;
+  let base: GameState = {
+    ...state,
+    activeEncounterId: resuming ? state.activeEncounterId : null,
+    waitScene: null,
+  };
+  if (resuming && pending) {
+    const roll = resultFromPending(pending);
+    const success = roll?.success ?? true;
+    const act = interpretAct({ ...base, pendingRoll: null, activeEncounterId: null }, trimmed, success);
+    return applyGmAct({ ...base, pendingRoll: null, activeEncounterId: null }, act, roll ?? undefined);
+  }
+  base = { ...base, pendingRoll: null, activeEncounterId: null };
+  const draft = interpretAct(base, trimmed, true);
+  if (draft.risky) {
+    const armed = armActionDie(base, draft.label, draft.trait, draft.dc, { type: "attempt", text: trimmed });
+    if (armed.kind === "armed") return armed.state;
+    const roll = armed.roll;
+    const act = interpretAct({ ...armed.state, pendingRoll: null }, trimmed, roll.success);
+    return applyGmAct({ ...armed.state, pendingRoll: null }, act, roll);
+  }
+  return applyGmAct(base, interpretAct(base, trimmed, true));
+}
+
 export function applyAction(state: GameState, action: GameAction): GameState {
   if (state.dead) return state;
-  if (state.waitScene && action.type !== "finishWait") return state;
   if (state.skirmish && action.type !== "skirmish") return state;
+  if (state.waitScene && action.type !== "finishWait" && action.type !== "attempt") return state;
+  if (state.waitScene && action.type === "attempt") {
+    state = { ...state, waitScene: null };
+  }
   if (state.pendingRoll) {
-    const resumeType = state.pendingRoll.resume?.type;
-    const allowed =
-      action.type === "castDie" ||
-      action.type === "finishDie" ||
-      action.type === "cancelDie" ||
-      action.type === "encounterChoice" ||
-      (state.pendingRoll.d20 != null && resumeType != null && action.type === resumeType);
-    if (!allowed) return state;
+    const resumingAttempt =
+      action.type === "attempt" &&
+      state.pendingRoll.resume?.type === "attempt" &&
+      state.pendingRoll.d20 != null;
+    if (action.type === "attempt" && !resumingAttempt) {
+      state = { ...state, pendingRoll: null };
+    } else if (!resumingAttempt) {
+      const resumeType = state.pendingRoll.resume?.type;
+      const allowed =
+        action.type === "castDie" ||
+        action.type === "finishDie" ||
+        action.type === "cancelDie" ||
+        action.type === "encounterChoice" ||
+        (state.pendingRoll.d20 != null && resumeType != null && action.type === resumeType);
+      if (!allowed) return state;
+    }
   }
   if (
     state.activeEncounterId &&
@@ -1838,7 +1994,8 @@ export function applyAction(state: GameState, action: GameAction): GameState {
     action.type !== "skirmish" &&
     action.type !== "castDie" &&
     action.type !== "finishDie" &&
-    action.type !== "cancelDie"
+    action.type !== "cancelDie" &&
+    action.type !== "attempt"
   ) {
     if (getActiveEncounter(state)) return state;
     state = { ...state, activeEncounterId: null };
@@ -2268,24 +2425,8 @@ export function applyAction(state: GameState, action: GameAction): GameState {
       return expandCache(state);
     case "partWays":
       return partWays(state);
-    case "attempt": {
-      const text = action.text.trim();
-      if (!text) return appendLog(state, "You stand there with an unfinished sentence.");
-      if (/\b(talk|ask|speak)\b/i.test(text) && state.presentCharacterId && !state.pendingRoll) {
-        return talk(state);
-      }
-      const plan = planAttempt(text);
-      const armed = armActionDie(state, plan.label, plan.trait, plan.dc, { type: "attempt", text });
-      if (armed.kind === "armed") return armed.state;
-      const roll = armed.roll;
-      let next = appendLog(armed.state, rollLine(roll, plan.label), roll);
-      next = applyOutcome(next, {
-        text: attemptCopy(next, text, plan, roll.success),
-        hours: plan.hours,
-        meters: roll.success ? { energy: -6 } : { energy: -10 },
-      });
-      return maybeRipple(next, "search", roll.success ? 0.22 : 0.12);
-    }
+    case "attempt":
+      return resolveAttempt(state, action.text);
     default:
       return state;
   }
@@ -2393,17 +2534,17 @@ function findDialogueEncounter(state: GameState): EncounterDef | undefined {
   return { id: `dlg-${node.id}`, text: node.text, choices: node.choices };
 }
 
-export function locationName(id: LocationId) {
-  return LOCATION_BY_ID[id]?.name ?? id;
+export function locationName(id: LocationId, state?: GameState) {
+  return state ? placeTitle(state, id) : LOCATION_BY_ID[id]?.name ?? id;
 }
 
-export function characterName(id: CharacterId) {
-  return CHARACTER_BY_ID[id]?.name ?? id;
+export function characterName(id: CharacterId, state?: GameState) {
+  return state ? characterOf(state, id)?.name ?? id : CHARACTER_BY_ID[id]?.name ?? id;
 }
 
 export function artFor(state: GameState): { location: string; portrait: string | null; atmosphere: string } {
-  const loc = LOCATION_BY_ID[state.locationId];
-  const person = state.presentCharacterId ? CHARACTER_BY_ID[state.presentCharacterId] : undefined;
+  const loc = locationOf(state, state.locationId);
+  const person = state.presentCharacterId ? characterOf(state, state.presentCharacterId) : undefined;
   const atmosphere =
     state.weather === "blizzard"
       ? "/art/atmosphere/blizzard.jpg"

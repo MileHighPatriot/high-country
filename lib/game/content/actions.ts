@@ -1,5 +1,6 @@
 import { accessibleCount, campMenuChoices } from "@/lib/game/camp";
 import { homesteadChoices, stoneGround, toolChoices } from "@/lib/game/homestead";
+import { characterOf, locationOf } from "@/lib/game/atlas";
 import { CHARACTER_BY_ID } from "@/lib/game/content/characters";
 import { LOCATION_BY_ID } from "@/lib/game/content/locations";
 import { trailChip } from "@/lib/game/readout";
@@ -596,7 +597,7 @@ function isHomeward(from: LocationId, to: LocationId, known: LocationId[], campA
 }
 
 function pickTravelEdges(state: GameState, rng: () => number) {
-  const loc = LOCATION_BY_ID[state.locationId];
+  const loc = locationOf(state, state.locationId);
   const edges = [...(loc?.connections ?? [])];
   if (edges.length === 0) return [];
   const band = timeBand(state.hour);
@@ -634,7 +635,7 @@ const FISH_PLACES = new Set(["creek", "frozen-fall", "beaver-meadow", "hot-sprin
  */
 export function campChoices(state: GameState): Choice[] {
   const rng = campRng(state);
-  const loc = LOCATION_BY_ID[state.locationId];
+  const loc = locationOf(state, state.locationId);
   const tags = loc?.tags ?? [];
   const band = timeBand(state.hour);
   const night = band === "night";
@@ -654,7 +655,7 @@ export function campChoices(state: GameState): Choice[] {
   const flavor: Choice[] = [];
 
   if (state.presentCharacterId) {
-    const p = CHARACTER_BY_ID[state.presentCharacterId];
+    const p = characterOf(state, state.presentCharacterId);
     must.push({
       id: "talk",
       label: p ? `Talk to ${p.name}` : "Talk",
@@ -663,7 +664,7 @@ export function campChoices(state: GameState): Choice[] {
     });
   }
   if (state.companionId) {
-    const p = CHARACTER_BY_ID[state.companionId];
+    const p = characterOf(state, state.companionId);
     must.push({
       id: "part",
       label: p ? `Part with ${p.name.split(" ")[0]}` : "Part ways",
@@ -973,11 +974,15 @@ function tagCampTiers(state: GameState, choices: Choice[]): Choice[] {
 }
 
 export function hasShelter(state: GameState): boolean {
-  const loc = LOCATION_BY_ID[state.locationId];
+  const loc = locationOf(state, state.locationId);
+  const cave = (state.storyFacts ?? []).some(
+    (f) => f.kind === "shelter" && f.locationId === state.locationId && f.status === "present",
+  );
   return Boolean(
     loc?.tags.includes("shelter") ||
       state.locationId === "high-camp" ||
       state.inventory.extras.includes("snow-hole") ||
+      cave ||
       (state.camp?.leanTo && state.camp.locationId === state.locationId) ||
       (state.camp?.roof && state.camp.locationId === state.locationId),
   );
