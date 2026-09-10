@@ -208,6 +208,38 @@ assert(
   "later hour can still refer to Absalom",
 );
 
+// --- typed firewood at the creek actually changes the run ---
+s = idleAt(createGame("Wood Walk", "coat"), "creek");
+const woodBefore = s.inventory.firewood;
+const woodWalk = say(s, "walk around and find some firewood");
+const woodJournal = journal(woodWalk);
+notTemplate(woodJournal, "creek firewood");
+assert(/firewood/i.test(woodJournal), `must name firewood: ${woodJournal}`);
+assert(!/the act/i.test(woodJournal), `must not collapse to "the act": ${woodJournal}`);
+assert(woodWalk.inventory.firewood > woodBefore, `firewood must go up, ${woodBefore} -> ${woodWalk.inventory.firewood}`);
+assert(
+  (woodWalk.storyFacts ?? []).some((f) => /firewood/i.test(f.name)),
+  "firewood is a story fact",
+);
+assert(
+  getChoices(woodWalk).some((c) => /firewood/i.test(c.label)),
+  `next choices about firewood, got ${getChoices(woodWalk).map((c) => c.label).join(" / ")}`,
+);
+
+// --- any sentence becomes a distinct fact, not a shared template ---
+s = idleAt(createGame("Pebble", "coat"), "creek");
+const pebble = say(s, "I throw a pebble at a magpie");
+const carved = say(idleAt(createGame("Carve", "coat"), "creek"), "I carve my name in the ice");
+notTemplate(journal(pebble), "pebble");
+notTemplate(journal(carved), "carve");
+assert(/pebble|magpie/i.test(journal(pebble)), `pebble/magpie must stay: ${journal(pebble)}`);
+assert(/carve|name|ice/i.test(journal(carved)), `carve must stay: ${journal(carved)}`);
+assert(journal(pebble) !== journal(carved), "two off-script acts must not share a paragraph");
+assert(
+  (pebble.storyFacts ?? []).some((f) => /pebble|magpie/i.test(`${f.name} ${f.note}`)),
+  "magpie/pebble remains a fact",
+);
+
 console.log("improv ok", {
   cave: cave.activeEncounterId,
   doeAt: doe.locationId,
@@ -215,4 +247,5 @@ console.log("improv ok", {
   songClosed: cannedId,
   absalom: revived.generatedPeople?.map((p) => p.name),
   facts: revived.storyFacts?.map((f) => f.name),
+  creekWood: woodWalk.inventory.firewood,
 });
