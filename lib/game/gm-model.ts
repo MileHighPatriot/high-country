@@ -97,3 +97,26 @@ export async function polishGmAct(act: GmAct, state: GameState, key: string): Pr
     encounter: { ...act.encounter, text: hook, choices },
   };
 }
+
+/** Swap in polished copy after the offline GM already changed the plot. */
+export function overlayPolish(state: GameState, polished: GmAct): GameState {
+  const logs = state.log.slice();
+  if (logs.length >= 2) {
+    const prev = logs[logs.length - 2]!;
+    logs[logs.length - 2] = { ...prev, text: polished.narration };
+  }
+  if (logs.length >= 1) {
+    const last = logs[logs.length - 1]!;
+    logs[logs.length - 1] = { ...last, text: polished.encounter.text };
+  }
+  const generated = (state.generatedEncounters ?? []).map((e) =>
+    e.id === polished.encounter.id ? polished.encounter : e,
+  );
+  const has = generated.some((e) => e.id === polished.encounter.id);
+  return {
+    ...state,
+    log: logs,
+    generatedEncounters: has ? generated : [...generated, polished.encounter],
+    activeEncounterId: state.activeEncounterId ? polished.encounter.id : state.activeEncounterId,
+  };
+}

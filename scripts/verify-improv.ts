@@ -114,6 +114,16 @@ notTemplate(doeJournal, "drowned doe");
 assert(/drowned doe/i.test(doeJournal), `doe must stay a doe: ${doeJournal}`);
 assert(!/sign turns into an animal/i.test(doeJournal), "not hunt mad-lib");
 assert(doe.locationId === "creek", `should be at Frozen Creek, got ${doe.locationId}`);
+const walkOnly = say(idleAt(createGame("Walker", "coat"), "high-camp"), "walk to Frozen Creek");
+assert(walkOnly.locationId === "creek", `walk lands at creek, got ${walkOnly.locationId}`);
+assert(
+  getChoices(walkOnly).some((c) => /frozen creek/i.test(c.label) && /walk |stay |leave /i.test(c.label)),
+  `arrival next hour must be about Frozen Creek, got ${getChoices(walkOnly).map((c) => c.label).join(" / ")}`,
+);
+assert(
+  !getChoices(walkOnly).some((c) => /keep walk to frozen creek/i.test(c.label)),
+  "arriving must not offer keep-walking as if you are still on the trail",
+);
 assert(doe.inventory.rations > beforeMeat, `meat from the doe, rations ${beforeMeat} -> ${doe.inventory.rations}`);
 assert(
   (doe.storyFacts ?? []).some((f) => /doe/i.test(f.name) && f.locationId === "creek"),
@@ -239,6 +249,11 @@ assert(
   (pebble.storyFacts ?? []).some((f) => /pebble|magpie/i.test(`${f.name} ${f.note}`)),
   "magpie/pebble remains a fact",
 );
+const pebbleChoices = getChoices(pebble).map((c) => c.label).join(" / ");
+const carvedChoices = getChoices(carved).map((c) => c.label).join(" / ");
+assert(/pebble|magpie/i.test(pebbleChoices), `pebble next hour must name pebble/magpie, got ${pebbleChoices}`);
+assert(/carve|name|ice/i.test(carvedChoices), `carve next hour must name the ice/name, got ${carvedChoices}`);
+assert(pebbleChoices !== carvedChoices, "two off-script acts must not share the same next buttons");
 
 console.log("improv ok", {
   cave: cave.activeEncounterId,
