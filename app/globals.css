@@ -444,9 +444,16 @@
 
 .hc-now {
   min-height: 0;
-  max-height: min(28vh, 11rem);
+  flex: 1 1 auto;
+  max-height: min(22vh, 9rem);
   overflow-y: auto;
   overflow-wrap: anywhere;
+}
+
+.hc-try {
+  position: relative;
+  z-index: 2;
+  flex: 0 0 auto;
 }
 
 .hc-cinema {

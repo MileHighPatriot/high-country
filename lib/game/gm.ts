@@ -595,39 +595,88 @@ function personEncounter(person: GeneratedPerson, fact: StoryFact, extra: string
   };
 }
 
-function genericEncounter(facts: StoryFact[], ground: string, said: string): EncounterDef {
-  const lead = facts[0];
-  const name = noThe(lead?.name ?? actTitle(said));
-  const id = `gm-${lead?.id ?? slug(said)}`;
+function arrivalEncounter(ground: string, said: string): EncounterDef {
+  const title = actTitle(said);
+  const id = `gm-arrive-${slug(ground)}`;
   return {
     id,
     repeatable: true,
-    text: `${sentence(lead?.note ?? said)} You are still at ${ground}. ${name} is still the hour.`,
+    text: `You are on ${ground} now. ${sentence(said)} The next hour is this ground, not the trail you already walked.`,
+    choices: [
+      {
+        id: "look",
+        label: `Walk ${ground} and see what it holds`,
+        outcome: {
+          text: `You walk ${ground}. The trail is behind you. This hour is the ground itself.`,
+          hours: 1,
+          meters: { energy: -4 },
+          followUpEncounter: id,
+        },
+      },
+      {
+        id: "stay",
+        label: `Stay on ${ground}`,
+        outcome: {
+          text: `You stay on ${ground}. ${sentence(title)} already got you here.`,
+          hours: 2,
+          followUpEncounter: id,
+        },
+      },
+      {
+        id: "leave",
+        label: `Leave ${ground} for now`,
+        outcome: {
+          text: `You leave ${ground}. Arriving still happened.`,
+          hours: 1,
+        },
+      },
+    ],
+  };
+}
+
+function genericEncounter(facts: StoryFact[], ground: string, said: string): EncounterDef {
+  const lead = facts[0];
+  const title = actTitle(said);
+  const name = noThe(lead?.name ?? title);
+  const nouns = Array.from(new Set((lead?.nouns ?? []).filter((n) => n.length > 2)));
+  const obj = noThe(nouns[0] ?? name);
+  const other = noThe(nouns.find((n) => fold(n) !== fold(obj)) ?? "");
+  const id = `gm-${lead?.id ?? slug(said)}`;
+  const note = sentence(lead?.note ?? said);
+  return {
+    id,
+    repeatable: true,
+    text: fold(note).includes(fold(ground))
+      ? `${note} The next hour is still ${title}.`
+      : `${note} ${ground} has to live with it. The next hour is still ${title}.`,
     choices: [
       {
         id: "continue",
-        label: `Keep at ${name}`,
+        label: `Keep ${title}`,
         outcome: {
-          text: `You keep at ${name} at ${ground}. The next hour is still that story.`,
+          text: `You keep at it: ${sentence(said)} ${obj} is still the work at ${ground}.`,
           hours: 2,
           meters: { energy: -4 },
           followUpEncounter: id,
         },
       },
       {
-        id: "wait",
-        label: `Wait here with ${name}`,
+        id: "press",
+        label: other ? `Stay with the ${obj} and the ${other}` : `See what ${obj} does next`,
         outcome: {
-          text: `You wait with ${name}. ${ground} does not hurry.`,
-          hours: 3,
+          text: other
+            ? `${titleCase(obj)} and ${other} stay the story at ${ground}. You do not walk off them.`
+            : `You stay with ${obj} at ${ground}. The hour does not pretend you did something else.`,
+          hours: 2,
+          meters: { energy: -3 },
           followUpEncounter: id,
         },
       },
       {
         id: "leave",
-        label: `Leave ${name} for now`,
+        label: `Leave ${obj} at ${ground}`,
         outcome: {
-          text: `You leave ${name} as a fact at ${ground}. It does not unhappen.`,
+          text: `You leave ${obj} as a fact at ${ground}. ${sentence(title)} already happened.`,
           hours: 1,
         },
       },
@@ -719,7 +768,15 @@ function narrate(state: GameState, slots: Slots, locName: string, success: boole
 
   if (bits.length === 0) {
     bits.push(sentence(slots.raw));
-    bits.push(`The mountain answers at ${locName}. That is now a fact of this run.`);
+    const obj = slots.objects[0];
+    const other = slots.objects[1];
+    if (obj && other) {
+      bits.push(`${titleCase(obj)} and ${other} are now facts at ${locName}.`);
+    } else if (obj) {
+      bits.push(`${titleCase(obj)} is now a fact at ${locName}.`);
+    } else {
+      bits.push(`${actTitle(slots.raw)} is now a fact at ${locName}.`);
+    }
   }
 
   for (const n of saidNouns) {
@@ -1001,6 +1058,27 @@ export function interpretAct(state: GameState, text: string, success: boolean): 
     }
   }
 
+  if (
+    facts.length === 0 &&
+    slots.objects[0] &&
+    (slots.stunts.includes("search") || /\b(pick up|pocket|stow|take the)\b/.test(line))
+  ) {
+    const obj = slots.objects[0];
+    extraAdd = extraAdd ?? slug(obj);
+    upsertFact(facts, {
+      id: factId("object", obj, locId),
+      kind: "object",
+      name: obj,
+      nouns: [obj, ...slots.objects],
+      locationId: locId,
+      said: slots.raw,
+      note: `The ${obj} is in the pack. You took it at ${ground}.`,
+      status: "carried",
+      dayOfYear: state.dayOfYear,
+      hour: state.hour,
+    });
+  }
+
   if (facts.length === 0) {
     const name = slots.objects[0] ?? actTitle(slots.raw);
     upsertFact(facts, {
@@ -1023,9 +1101,11 @@ export function interpretAct(state: GameState, text: string, success: boolean): 
   const personFact = facts.find((f) => f.kind === "person");
   const genPerson = people[0];
   let encounter: EncounterDef;
+  const rich = Boolean(caveFact || doeFact || personFact || isWoodAsk(line) || isWaterAsk(line));
   if (caveFact) encounter = caveEncounter(caveFact, ground);
   else if (doeFact) encounter = doeEncounter(doeFact, ground);
   else if (personFact && genPerson) encounter = personEncounter(genPerson, personFact, slots.objects.find((o) => o.includes("kettle")) ?? null);
+  else if (relocate && !rich) encounter = arrivalEncounter(ground, slots.raw);
   else encounter = genericEncounter(facts, ground, slots.raw);
 
   if (present && encounter.characterId == null && (slots.song || slots.gift || slots.lie || slots.accuse)) {
@@ -1069,6 +1149,8 @@ export const TEMPLATE_MARKERS = [
   /you try:/i,
   /hunt goes your way/i,
   /the mountain does not comment/i,
+  /the mountain answers/i,
+  /that is now a fact of this run/i,
   /\{intent\}/,
   /BODY\[/,
 ];

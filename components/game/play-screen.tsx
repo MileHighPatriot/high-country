@@ -20,7 +20,8 @@ import { campHotspots } from "@/lib/game/camp";
 import { cinemaAfterAction, type CinemaSequence } from "@/lib/game/cinema";
 import { characterOf, locationOf } from "@/lib/game/atlas";
 import { CHARACTER_BY_ID } from "@/lib/game/content/characters";
-import { loadGmKey, saveGmKey } from "@/lib/game/gm-model";
+import { interpretAct } from "@/lib/game/gm";
+import { loadGmKey, overlayPolish, polishGmAct, saveGmKey } from "@/lib/game/gm-model";
 import {
   applyAction,
   artFor,
@@ -510,6 +511,7 @@ export function PlayScreen() {
   const [journalOpen, setJournalOpen] = useState(false);
   const [packOpen, setPackOpen] = useState(false);
   const [intent, setIntent] = useState("");
+  const [listening, setListening] = useState(false);
   const holdTimer = useRef<number>(0);
   const journalEnd = useRef<HTMLDivElement>(null);
   const booted = useRef(false);
@@ -559,6 +561,33 @@ export function PlayScreen() {
       return;
     }
     setChoiceHold(false);
+    if (action.type === "attempt" && loadGmKey() && !next.pendingRoll && !next.dead) {
+      void polishTypedHour(prev, next, action.text);
+    }
+  }
+
+  async function polishTypedHour(prev: GameState, applied: GameState, text: string) {
+    const key = loadGmKey();
+    if (!key) return;
+    setListening(true);
+    try {
+      const draft = interpretAct(
+        { ...prev, pendingRoll: null, activeEncounterId: null, waitScene: null },
+        text,
+        true,
+      );
+      const polished = await polishGmAct(draft, prev, key);
+      if (!polished) return;
+      const appliedId = applied.log.at(-1)?.id;
+      setState((s) => {
+        if (!s || s.log.at(-1)?.id !== appliedId) return s;
+        return overlayPolish(s, polished);
+      });
+    } catch {
+      /* offline GM already wrote the hour */
+    } finally {
+      setListening(false);
+    }
   }
 
   function act(choice: Choice) {
@@ -665,7 +694,7 @@ export function PlayScreen() {
 
       <div className="hc-hud border-t border-white/10 bg-black/78 backdrop-blur-md">
         <div className="mx-auto grid h-full min-h-0 max-w-6xl gap-3 px-3 py-2 pb-[max(0.6rem,env(safe-area-inset-bottom))] lg:grid-cols-[minmax(0,1fr)_16.5rem]">
-          <div className="flex min-h-0 flex-col gap-2 overflow-y-auto">
+          <div className="flex min-h-0 flex-col gap-2">
             <div className="grid grid-cols-5 gap-1 lg:hidden">
               {(
                 [
@@ -707,11 +736,11 @@ export function PlayScreen() {
             </div>
             {!state.dead && !state.skirmish && (
               <form
-                className="flex gap-2"
+                className="hc-try flex shrink-0 gap-2"
                 onSubmit={(e) => {
                   e.preventDefault();
                   const text = intent.trim();
-                  if (!text || !state) return;
+                  if (!text || !state || listening) return;
                   setIntent("");
                   commit(state, { type: "attempt", text });
                 }}
@@ -719,17 +748,16 @@ export function PlayScreen() {
                 <Input
                   value={intent}
                   onChange={(e) => setIntent(e.target.value)}
-                  placeholder="What do you do?"
+                  placeholder="Type anything. The mountain answers."
                   maxLength={400}
-                  className="border-white/20 bg-black/40 text-stone-100"
+                  autoComplete="off"
+                  disabled={listening}
+                  className="h-12 border-amber-200/35 bg-black/55 text-base text-stone-100"
                 />
-                <Button type="submit" variant="secondary" disabled={!intent.trim()}>
-                  Do
+                <Button type="submit" className="h-12 px-5" disabled={!intent.trim() || listening}>
+                  {listening ? "…" : "Do"}
                 </Button>
               </form>
-            )}
-            {!state.dead && !state.skirmish && (
-              <p className="text-[10px] tracking-wide text-amber-100/45">Type anything. The mountain answers.</p>
             )}
             {state.pendingRoll ? (
               <FateDie
@@ -753,11 +781,14 @@ export function PlayScreen() {
             ) : (
               <div
                 className={cn(
-                  "hc-choices space-y-2",
+                  "hc-choices min-h-0 space-y-2 overflow-y-auto",
                   choiceHold && "is-held",
                   livingTellFrostsChrome(tell) && "hc-live-frost",
                 )}
               >
+                {!state.dead && !state.skirmish && (
+                  <p className="text-[10px] tracking-[0.2em] text-amber-100/40 uppercase">Suggestions · typing is the hour</p>
+                )}
                 {(idle || state.waitScene) &&
                   showHero
                     .filter((c) => c.action.type === "wait" || c.action.type === "finishWait")
