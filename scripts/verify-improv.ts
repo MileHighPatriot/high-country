@@ -1,3 +1,4 @@
+import { emptyCamp } from "@/lib/game/camp";
 import { CHARACTER_BY_ID } from "@/lib/game/content/characters";
 import { applyAction, createGame, getChoices } from "@/lib/game/engine";
 import { campVerbOf, looksLikeTemplate, matchPresentedOption } from "@/lib/game/gm";
@@ -63,9 +64,33 @@ function notTemplate(text: string, label: string) {
   assert(!looksLikeTemplate(text), `${label} collapsed to a template: ${text}`);
 }
 
+function isSoftFollowUp(label: string) {
+  return /^(keep)\b/i.test(label) || /^stay (in|on|with)\b/i.test(label) || /^leave \S.+( at | for now)/i.test(label);
+}
+
+function assertIdleAfterAct(state: GameState, label: string) {
+  assert(!state.pendingRoll, `${label}: die should be spent`);
+  assert(!state.activeEncounterId, `${label}: should return to idle, still ${state.activeEncounterId}`);
+  const labels = getChoices(state).map((c) => c.label);
+  assert(
+    !labels.some((l) => isSoftFollowUp(l)),
+    `${label}: soft Keep/Stay/Leave follow-up, got ${labels.join(" / ")}`,
+  );
+}
+
+function assertDeclareThenRoll(state: GameState, text: string, label: string) {
+  const armed = applyAction(state, { type: "attempt", text });
+  assert(armed.pendingRoll, `${label}: typed act must arm a die`);
+  assert(armed.pendingRoll.trait, `${label}: stake needs a trait`);
+  assert(armed.pendingRoll.dc > 0, `${label}: stake needs a DC`);
+  assert(!armed.activeEncounterId, `${label}: declare must stay idle until the roll`);
+  return armed;
+}
+
 // --- short camp verbs ---
 assert(campVerbOf("eat") === "eat", "eat is a camp verb");
 assert(campVerbOf("I go to bed") === "sleep", "go to bed sleeps");
+assert(campVerbOf("rest") === "rest", "rest is a camp verb");
 assert(campVerbOf("I dig a snow cave") == null, "cave is not a camp verb");
 
 let s = idleAt(createGame("Improv Ward", "coat"), "high-camp");
@@ -74,10 +99,16 @@ const ate = say(s, "eat");
 assert(ate.inventory.rations === s.inventory.rations - 1 || ate.meters.hunger > s.meters.hunger, "eat still feeds");
 assert(!looksLikeTemplate(journal(ate)), "eat copy is still camp copy, not attempt template");
 
-// --- 1. snow cave ---
+const rested = say(s, "rest");
+assert(!rested.pendingRoll, "typed rest does not leave a die on the table");
+assert(!rested.activeEncounterId, "typed rest returns to idle");
+
+// --- 1. snow cave: declare → roll → idle ---
 s = idleAt(createGame("Cave Ward", "coat"), "high-camp");
 const caveLine = "I dig a snow cave under the deadfall, drag my blanket in, and wait the blow out.";
-const cave = say(s, caveLine);
+const caveArmed = assertDeclareThenRoll(s, caveLine, "snow cave");
+assert(!caveArmed.inventory.extras.includes("snow-hole"), "cave must not resolve before the die");
+const cave = throwDie(caveArmed, true);
 const caveJournal = journal(cave);
 notTemplate(caveJournal, "snow cave");
 assert(/snow cave/i.test(caveJournal), `cave journal must name the cave: ${caveJournal}`);
@@ -90,48 +121,38 @@ assert(
   (cave.storyFacts ?? []).some((f) => /snow cave/i.test(f.name) && f.locationId === "high-camp"),
   "snow cave is a story fact",
 );
-assert(cave.activeEncounterId, "next beat is a scene about the cave");
-const caveChoices = getChoices(cave);
-assert(
-  caveChoices.some((c) => /cave/i.test(c.label)),
-  `next choices must be about the cave, got ${caveChoices.map((c) => c.label).join(" / ")}`,
-);
-const stay = caveChoices.find((c) => c.action.type === "encounterChoice" && /stay/i.test(c.label));
-assert(stay, "stay in the cave is offered");
-const stayed = applyAction(cave, stay!.action);
-const stayedText = `${journal(stayed)}\n${sceneNarration(stayed)}`;
-assert(/cave/i.test(stayedText), `next hour still about the cave: ${stayedText}`);
-assert(stayed.locationId === "high-camp", "staying does not walk off");
-assert(stayed.inventory.extras.includes("snow-hole") || (stayed.storyFacts ?? []).some((f) => f.kind === "shelter"), "still in/of the cave");
+assertIdleAfterAct(cave, "snow cave");
+assert(/cave/i.test(sceneNarration(cave)), `idle hour can still name the cave: ${sceneNarration(cave)}`);
 
-// --- 2. drowned doe ---
+// --- 2. drowned doe + walk trail ---
 s = idleAt(createGame("Doe Ward", "coat"), "high-camp");
 const beforeMeat = s.inventory.rations;
 const doeLine = "I walk to Frozen Creek and cut meat from a drowned doe jammed in the ice.";
-const doe = say(s, doeLine);
+const doeArmed = assertDeclareThenRoll(s, doeLine, "drowned doe");
+assert(doeArmed.locationId === "high-camp", "doe walk must not relocate before the die");
+const doe = throwDie(doeArmed, true);
 const doeJournal = journal(doe);
 notTemplate(doeJournal, "drowned doe");
 assert(/drowned doe/i.test(doeJournal), `doe must stay a doe: ${doeJournal}`);
 assert(!/sign turns into an animal/i.test(doeJournal), "not hunt mad-lib");
 assert(doe.locationId === "creek", `should be at Frozen Creek, got ${doe.locationId}`);
-const walkOnly = say(idleAt(createGame("Walker", "coat"), "high-camp"), "walk to Frozen Creek");
-assert(walkOnly.locationId === "creek", `walk lands at creek, got ${walkOnly.locationId}`);
-assert(
-  getChoices(walkOnly).some((c) => /frozen creek/i.test(c.label) && /walk |stay |leave /i.test(c.label)),
-  `arrival next hour must be about Frozen Creek, got ${getChoices(walkOnly).map((c) => c.label).join(" / ")}`,
-);
-assert(
-  !getChoices(walkOnly).some((c) => /keep walk to frozen creek/i.test(c.label)),
-  "arriving must not offer keep-walking as if you are still on the trail",
-);
+assertIdleAfterAct(doe, "drowned doe");
 assert(doe.inventory.rations > beforeMeat, `meat from the doe, rations ${beforeMeat} -> ${doe.inventory.rations}`);
 assert(
   (doe.storyFacts ?? []).some((f) => /doe/i.test(f.name) && f.locationId === "creek"),
   "doe remains a fact at the creek",
 );
-const back = { ...doe, activeEncounterId: null, pendingRoll: null };
-const still = sceneNarration(back);
-assert(/doe/i.test(still) || (back.storyFacts ?? []).some((f) => /doe/i.test(f.name)), "returning hour can still name the doe");
+assert(/doe/i.test(sceneNarration(doe)) || (doe.storyFacts ?? []).some((f) => /doe/i.test(f.name)), "returning hour can still name the doe");
+
+const walkArmed = assertDeclareThenRoll(idleAt(createGame("Walker", "coat"), "high-camp"), "walk to Frozen Creek", "walk trail");
+assert(walkArmed.locationId === "high-camp", "walk must not land before the die");
+const walkOnly = throwDie(walkArmed, true);
+assert(walkOnly.locationId === "creek", `walk lands at creek, got ${walkOnly.locationId}`);
+assertIdleAfterAct(walkOnly, "walk trail");
+
+const walkFail = say(idleAt(createGame("Walker Fail", "coat"), "high-camp"), "walk to Frozen Creek", false);
+assert(walkFail.locationId === "creek", `failed walk still resolves the trail, got ${walkFail.locationId}`);
+assertIdleAfterAct(walkFail, "failed walk");
 
 // --- 3. mid canned encounter, type off-script ---
 s = idleAt(createGame("Song Ward", "fatwood"), "abandoned-cabin");
@@ -152,10 +173,10 @@ notTemplate(sungJournal, "french song");
 assert(/french song/i.test(sungJournal), `journal must quote the song: ${sungJournal}`);
 assert(!/jerks her chin/i.test(sung.log.at(-1)?.text ?? ""), "last beat is not the unused button");
 assert(sung.activeEncounterId !== cannedId, `canned beat must close, still ${sung.activeEncounterId}`);
+assertIdleAfterAct(sung, "french song");
 assert(/french|song|fatwood/i.test(sung.log.at(-1)?.text ?? sungJournal), "new beat is about the act");
 assert(
-  getChoices(sung).every((c) => !cannedLabels.split(" | ").includes(c.label)) ||
-    /song|gift|fatwood|french/i.test(getChoices(sung).map((c) => c.label).join(" ")),
+  getChoices(sung).every((c) => !cannedLabels.split(" | ").includes(c.label)),
   "next choices should not be the unused eliza buttons",
 );
 
@@ -164,6 +185,7 @@ s = idleAt(createGame("Absalom Ward", "coat"), "high-camp");
 const meet = say(s, "I meet a trapper called Absalom Pike who owes me a kettle.");
 notTemplate(journal(meet), "absalom");
 assert(/Absalom Pike/i.test(journal(meet)), `must keep the name: ${journal(meet)}`);
+assertIdleAfterAct(meet, "absalom");
 assert(
   (meet.generatedPeople ?? []).some((p) => /absalom/i.test(p.name)),
   "generated people keeps Absalom",
@@ -185,7 +207,6 @@ assert(
   (revived.storyFacts ?? []).some((f) => /absalom|kettle/i.test(`${f.name} ${f.note}`)),
   "kettle/absalom fact survives save",
 );
-assert(revived.generatedEncounters && revived.generatedEncounters.length > 0, "generated scene persists");
 
 // --- 5. presented option in own words ---
 s = idleAt(createGame("Wood Ward", "coat"), "abandoned-cabin");
@@ -231,10 +252,7 @@ assert(
   (woodWalk.storyFacts ?? []).some((f) => /firewood/i.test(f.name)),
   "firewood is a story fact",
 );
-assert(
-  getChoices(woodWalk).some((c) => /firewood/i.test(c.label)),
-  `next choices about firewood, got ${getChoices(woodWalk).map((c) => c.label).join(" / ")}`,
-);
+assertIdleAfterAct(woodWalk, "creek firewood");
 
 // --- any sentence becomes a distinct fact, not a shared template ---
 s = idleAt(createGame("Pebble", "coat"), "creek");
@@ -249,18 +267,64 @@ assert(
   (pebble.storyFacts ?? []).some((f) => /pebble|magpie/i.test(`${f.name} ${f.note}`)),
   "magpie/pebble remains a fact",
 );
-const pebbleChoices = getChoices(pebble).map((c) => c.label).join(" / ");
-const carvedChoices = getChoices(carved).map((c) => c.label).join(" / ");
-assert(/pebble|magpie/i.test(pebbleChoices), `pebble next hour must name pebble/magpie, got ${pebbleChoices}`);
-assert(/carve|name|ice/i.test(carvedChoices), `carve next hour must name the ice/name, got ${carvedChoices}`);
-assert(pebbleChoices !== carvedChoices, "two off-script acts must not share the same next buttons");
+assert(
+  (carved.storyFacts ?? []).some((f) => /carve|name|ice/i.test(`${f.name} ${f.note}`)),
+  "carve remains a fact",
+);
+assertIdleAfterAct(pebble, "pebble");
+assertIdleAfterAct(carved, "carve");
+
+// --- known recipes: fire / raise ---
+s = idleAt(createGame("Fire Ward", "coat"), "high-camp");
+s = { ...s, campfire: false, inventory: { ...s.inventory, firewood: 4 } };
+const fireArmed = assertDeclareThenRoll(s, "I make a fire", "make a fire");
+assert(!fireArmed.campfire, "fire must not light before the die");
+assert(fireArmed.inventory.firewood === s.inventory.firewood, "wood stays until the roll");
+const lit = throwDie(fireArmed, true);
+assert(lit.campfire, "successful fire recipe must light a real fire");
+assert(lit.inventory.firewood < s.inventory.firewood, "successful fire spends wood");
+assertIdleAfterAct(lit, "make a fire");
+
+const fireFail = say({ ...s, campfire: false, inventory: { ...s.inventory, firewood: 4 } }, "I make a fire", false);
+assert(!fireFail.campfire, "failed fire is an honest fail");
+assertIdleAfterAct(fireFail, "failed fire");
+
+s = idleAt(createGame("Raise Ward", "coat"), "high-camp");
+s = {
+  ...s,
+  camp: emptyCamp("high-camp", { fireRing: true }),
+  inventory: { ...s.inventory, logs: 8, extras: Array.from(new Set([...s.inventory.extras, "axe"])) },
+};
+const raiseArmed = assertDeclareThenRoll(s, "I raise a platform", "raise a platform");
+assert(!raiseArmed.camp?.jobs.some((j) => j.kind === "platform"), "platform must not start before the die");
+const raised = throwDie(raiseArmed, true);
+assert(
+  raised.camp?.jobs.some((j) => j.kind === "platform") || raised.camp?.platform,
+  "successful raise recipe must start the platform",
+);
+assertIdleAfterAct(raised, "raise a platform");
+
+const raiseFail = say(
+  {
+    ...s,
+    camp: emptyCamp("high-camp", { fireRing: true }),
+    inventory: { ...s.inventory, logs: 8, extras: Array.from(new Set([...s.inventory.extras, "axe"])) },
+  },
+  "I raise a platform",
+  false,
+);
+assert(!raiseFail.camp?.jobs.some((j) => j.kind === "platform") && !raiseFail.camp?.platform, "failed raise does not stand");
+assertIdleAfterAct(raiseFail, "failed raise");
 
 console.log("improv ok", {
-  cave: cave.activeEncounterId,
+  caveIdle: !cave.activeEncounterId,
   doeAt: doe.locationId,
   meat: doe.inventory.rations,
+  walkAt: walkOnly.locationId,
   songClosed: cannedId,
   absalom: revived.generatedPeople?.map((p) => p.name),
   facts: revived.storyFacts?.map((f) => f.name),
   creekWood: woodWalk.inventory.firewood,
+  fireLit: lit.campfire,
+  platform: raised.camp?.jobs.map((j) => j.kind),
 });

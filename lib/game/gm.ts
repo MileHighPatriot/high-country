@@ -1,14 +1,18 @@
 import { characterOf, locationOf, placeTitle } from "@/lib/game/atlas";
+import { atOwnCamp } from "@/lib/game/camp";
 import { CHARACTERS } from "@/lib/game/content/characters";
 import { LOCATIONS } from "@/lib/game/content/locations";
+import { canRaise, WORKS } from "@/lib/game/homestead";
 import { trailHours } from "@/lib/game/readout";
 import type {
+  CampPiece,
   CharacterId,
   EncounterChoice,
   EncounterDef,
   GameState,
   GeneratedPerson,
   GeneratedPlace,
+  HomesteadWorkId,
   LocationId,
   Meters,
   Outcome,
@@ -18,7 +22,7 @@ import type {
 } from "@/lib/game/types";
 import { peopleAt } from "@/lib/game/world";
 
-export type CampVerb = "eat" | "drink" | "sleep";
+export type CampVerb = "eat" | "drink" | "sleep" | "rest";
 
 export interface GmAct {
   risky: boolean;
@@ -40,6 +44,12 @@ export interface GmAct {
   narration: string;
   encounter: EncounterDef;
   focusFactIds: string[];
+  /** Light a real fire after the die — not a Keep/Stay follow-up. */
+  lightFire?: boolean;
+  campfireHours?: number;
+  tendHours?: number;
+  raiseWork?: HomesteadWorkId;
+  buildPiece?: CampPiece;
 }
 
 const STOP = new Set(
@@ -120,15 +130,12 @@ export function actTitle(raw: string): string {
   return t || "what you did";
 }
 
-function noThe(name: string) {
-  return name.replace(/^(the|a|an)\s+/i, "");
-}
-
 export function campVerbOf(text: string): CampVerb | null {
   const line = fold(text).replace(/\.$/, "");
   if (/^(i )?(eat|chew a ration|take a bite)$/.test(line)) return "eat";
   if (/^(i )?(drink|drink water|fill the tin and drink)$/.test(line)) return "drink";
   if (/^(i )?(sleep|go to sleep|go to bed|lie down)$/.test(line)) return "sleep";
+  if (/^(i )?(rest|watch a while|sit a while|rest the legs)$/.test(line)) return "rest";
   return null;
 }
 
@@ -304,6 +311,9 @@ function extractStunts(line: string): string[] {
     [/\bmeet|\bfind a man|\bfind a woman|\ba trapper/, "meet"],
     [/\binvent|\bside trail|\boff the (map|trail)/, "invent-trail"],
     [/\bthrow|\btoss/, "throw"],
+    [/\bmake a fire|\bbuild a fire|\blight a fire|\bstart a fire|\bget a coal/, "fire"],
+    [/\btend (the )?fire|\bfeed the (fire|coals)/, "tend"],
+    [/\braise |\bbuild a (lean|platform|wall|roof|shed)/, "raise"],
   ];
   for (const [re, name] of verbs) {
     if (re.test(line) && !stunts.includes(name)) stunts.push(name);
@@ -319,6 +329,77 @@ function isWoodAsk(line: string) {
 
 function isWaterAsk(line: string) {
   return /\b(fill|melt).{0,20}(water|ice|tin|canteen)|\bgather water\b|\bget water\b|\bdrink from the creek\b/.test(line);
+}
+
+function isFireAsk(line: string) {
+  return (
+    /\b(make|build|start|light|kindle)\b.{0,28}\b(a |the )?(fire|coal)\b/.test(line) ||
+    /\bget a coal going\b/.test(line) ||
+    /\b(a |the )?fire going\b/.test(line)
+  );
+}
+
+function isTendAsk(line: string) {
+  return /\btend (the )?fire\b|\bfeed the (fire|coals|flames)\b|\bbank the coals\b|\bsit by the fire\b/.test(
+    line,
+  );
+}
+
+function raiseTarget(
+  line: string,
+): { kind: "raise"; work: HomesteadWorkId } | { kind: "build"; piece: CampPiece } | null {
+  if (isFireAsk(line) || isTendAsk(line)) return null;
+  if (/\bsnow cave\b/.test(line) || (/\bdig\b/.test(line) && !/\bouthouse\b/.test(line))) return null;
+  const wants =
+    /\braise\b|\bbuild\b|\blay\b|\bhang\b|\bframe\b|\bput up\b|\bset a\b/.test(line) ||
+    /\blean-?to\b/.test(line) ||
+    /\bplatform\b/.test(line);
+  if (!wants) return null;
+  if (/\blean-?to\b/.test(line)) return { kind: "build", piece: "leanTo" };
+  if (/\bfire ring\b|\bring of stone\b/.test(line)) return { kind: "build", piece: "fireRing" };
+  if (/\bwoodpile\b|\bwood pile\b/.test(line)) return { kind: "build", piece: "woodpile" };
+  if (/\bcache pit\b/.test(line)) return { kind: "build", piece: "cachePit" };
+  if (/\bdrying rack\b/.test(line)) return { kind: "build", piece: "dryingRack" };
+  const named: Array<[RegExp, HomesteadWorkId]> = [
+    [/\bplatform\b/, "platform"],
+    [/\bwind wall\b/, "wall-wind"],
+    [/\bcreek wall\b/, "wall-creek"],
+    [/\btimber wall\b/, "wall-timber"],
+    [/\bpass wall\b/, "wall-pass"],
+    [/\broof\b/, "roof"],
+    [/\bdoor\b/, "door"],
+    [/\bstove\b/, "stove"],
+    [/\bbunk\b/, "bunk"],
+    [/\bloft\b/, "loft"],
+    [/\bshelves\b/, "shelves"],
+    [/\btable\b/, "table"],
+    [/\blatch\b/, "latch"],
+    [/\bfloor\b/, "floor"],
+    [/\bshutters\b/, "shutters"],
+    [/\bwindow skin\b/, "window-skin"],
+    [/\bpeg rail\b/, "peg-rail"],
+    [/\bwash basin\b/, "wash-basin"],
+    [/\blamp niche\b/, "lamp-niche"],
+    [/\bwood shed\b/, "wood-shed"],
+    [/\bstorage shed\b/, "storage-shed"],
+    [/\bsmokehouse\b/, "smokehouse"],
+    [/\bouthouse\b/, "outhouse"],
+    [/\bgarden\b/, "garden"],
+    [/\brain barrel\b/, "rain-barrel"],
+    [/\bspring box\b/, "spring-box"],
+    [/\broot cellar\b/, "root-cellar"],
+    [/\bhide stretchers\b/, "hide-stretchers"],
+    [/\bmeat pole\b/, "meat-pole"],
+    [/\bpalisade\b/, "palisade"],
+    [/\bwash trough\b/, "wash-trough"],
+    [/\blookout\b/, "lookout"],
+    [/\bfish rack\b/, "fish-rack"],
+    [/\bice cellar\b/, "ice-cellar"],
+  ];
+  for (const [re, id] of named) {
+    if (re.test(line)) return { kind: "raise", work: id };
+  }
+  return null;
 }
 
 function parseSlots(state: GameState, text: string): Slots {
@@ -372,6 +453,26 @@ function upsertFact(list: StoryFact[], fact: StoryFact) {
 
 function dieFor(slots: Slots, state: GameState): { risky: boolean; trait: Trait; dc: number; label: string } {
   const obj = slots.objects[0];
+  const line = fold(slots.raw);
+  if (isFireAsk(line)) {
+    return { risky: true, trait: "hands", dc: state.weather === "blizzard" ? 13 : 11, label: "Make a fire" };
+  }
+  if (isTendAsk(line)) {
+    return { risky: true, trait: "hands", dc: 10, label: "Tend the fire" };
+  }
+  const raise = raiseTarget(line);
+  if (raise?.kind === "raise") {
+    const work = WORKS.find((w) => w.id === raise.work);
+    return { risky: true, trait: "hands", dc: 12, label: work?.label ?? "Raise" };
+  }
+  if (raise?.kind === "build") {
+    return {
+      risky: true,
+      trait: "hands",
+      dc: 12,
+      label: raise.piece === "leanTo" ? "Raise a lean-to" : "Build",
+    };
+  }
   if (slots.stunts.includes("dig") || slots.objects.includes("snow cave")) {
     return {
       risky: true,
@@ -380,7 +481,7 @@ function dieFor(slots: Slots, state: GameState): { risky: boolean; trait: Trait;
       label: obj ? `Dig the ${obj}` : "Dig a cave",
     };
   }
-  if (slots.objects.includes("drowned doe") || /\bcut meat|\bbutcher|\bskin\b/.test(fold(slots.raw))) {
+  if (slots.objects.includes("drowned doe") || /\bcut meat|\bbutcher|\bskin\b/.test(line)) {
     return { risky: true, trait: "hands", dc: 13, label: "Cut meat from the ice" };
   }
   if (slots.stunts.includes("climb")) {
@@ -396,19 +497,19 @@ function dieFor(slots: Slots, state: GameState): { risky: boolean; trait: Trait;
     return { risky: true, trait: "savvy", dc: 12, label: "Take a trail the map does not have" };
   }
   if (slots.stunts.includes("sing") || slots.song) {
-    return { risky: Boolean(state.presentCharacterId), trait: "savvy", dc: 11, label: slots.song ?? "Sing" };
+    return { risky: true, trait: "savvy", dc: 11, label: slots.song ?? "Sing" };
   }
-  if (/\bscout|track|read sign|read the ground/.test(fold(slots.raw))) {
+  if (/\bscout|track|read sign|read the ground/.test(line)) {
     return { risky: true, trait: "savvy", dc: 12, label: "Read the ground" };
   }
   if (slots.stunts.includes("walk") && slots.travelTo) {
-    return { risky: state.weather === "blizzard", trait: "grit", dc: 13, label: `Walk to ${slots.travelName}` };
+    return { risky: true, trait: "grit", dc: state.weather === "blizzard" ? 13 : 11, label: `Walk to ${slots.travelName}` };
   }
   const title = actTitle(slots.raw);
-  if (isWoodAsk(fold(slots.raw)) && (state.weather === "blizzard" || state.hour < 6 || state.hour >= 20)) {
+  if (isWoodAsk(line)) {
     return { risky: true, trait: "hands", dc: 12, label: title };
   }
-  return { risky: false, trait: "savvy", dc: 12, label: title };
+  return { risky: true, trait: "savvy", dc: 12, label: title };
 }
 
 function extraFromGift(gift: string | null, state: GameState): string | null {
@@ -467,220 +568,14 @@ function makePlace(state: GameState, name: string): GeneratedPlace {
   };
 }
 
-function caveEncounter(fact: StoryFact, ground: string): EncounterDef {
-  return {
-    id: `gm-${fact.id}`,
-    repeatable: true,
-    text: `The ${fact.name} under the deadfall still holds at ${ground}. Your blanket is in it. The blow works the ridge, not the mouth, if you stay.`,
-    choices: [
-      {
-        id: "stay",
-        label: "Stay in the snow cave",
-        outcome: {
-          text: `You stay in the snow cave. Hours go. The deadfall keeps its promise. You are still in the cave.`,
-          hours: 3,
-          meters: { warmth: 10, energy: -4 },
-          extraAdd: "snow-hole",
-          followUpEncounter: `gm-${fact.id}`,
-        },
-      },
-      {
-        id: "bank",
-        label: "Bank the mouth of the snow cave",
-        outcome: {
-          text: `You bank the mouth of the snow cave with snow. The blanket stays. The blow finds less of you.`,
-          hours: 1,
-          meters: { warmth: 8, energy: -6 },
-          extraAdd: "snow-hole",
-          followUpEncounter: `gm-${fact.id}`,
-        },
-      },
-      {
-        id: "out",
-        label: "Crawl out of the snow cave",
-        outcome: {
-          text: `You crawl out of the snow cave. The deadfall is a roof you left. The cave remains at ${ground} if you come back.`,
-          hours: 1,
-          extraRemove: "snow-hole",
-        },
-      },
-    ],
-  };
-}
-
-function doeEncounter(fact: StoryFact, ground: string): EncounterDef {
-  return {
-    id: `gm-${fact.id}`,
-    repeatable: true,
-    text: `The drowned doe is still jammed in the ice at ${ground}. Meat is a fact you can return to.`,
-    choices: [
-      {
-        id: "more",
-        label: "Cut more from the drowned doe",
-        check: { trait: "hands", dc: 12 },
-        success: {
-          text: `You cut more from the drowned doe jammed in the ice. The carcass still hangs in the creek.`,
-          hours: 2,
-          inventory: { rations: 1 },
-          meters: { energy: -8 },
-          followUpEncounter: `gm-${fact.id}`,
-        },
-        fail: {
-          text: `The ice around the drowned doe shifts. You keep your fingers. You get less meat.`,
-          hours: 2,
-          meters: { health: -4, energy: -8 },
-          followUpEncounter: `gm-${fact.id}`,
-        },
-      },
-      {
-        id: "leave",
-        label: "Leave the drowned doe in the ice",
-        outcome: {
-          text: `You leave the drowned doe jammed in the ice at ${ground}. She will keep in this cold.`,
-          hours: 1,
-        },
-      },
-      {
-        id: "up",
-        label: "Follow the creek up from the doe",
-        outcome: {
-          text: `You leave the drowned doe and follow the creek up. The carcass stays a mark on this ice.`,
-          hours: 2,
-          meters: { energy: -6 },
-        },
-      },
-    ],
-  };
-}
-
-function personEncounter(person: GeneratedPerson, fact: StoryFact, extra: string | null): EncounterDef {
-  const kettle = extra ?? fact.nouns.find((n) => n.includes("kettle")) ?? "what they owe";
-  return {
-    id: `gm-${fact.id}`,
-    repeatable: true,
-    characterId: person.id,
-    text: `${person.name} is still here. ${fact.note}`,
-    choices: [
-      {
-        id: "ask",
-        label: `Ask ${person.name} about the ${kettle}`,
-        outcome: {
-          text: `You ask ${person.name} about the ${kettle}. They do not pretend it is weather.`,
-          hours: 1,
-          standing: { id: person.id, delta: 1 },
-          presentCharacter: person.id,
-          followUpEncounter: `gm-${fact.id}`,
-        },
-      },
-      {
-        id: "walk",
-        label: `Walk on with ${person.name} in mind`,
-        outcome: {
-          text: `${person.name} remains a fact of this country. The ${kettle} is not settled.`,
-          hours: 1,
-          presentCharacter: null,
-        },
-      },
-      {
-        id: "stay",
-        label: `Stay with ${person.name}`,
-        outcome: {
-          text: `You stay with ${person.name}. The hour is company, not charity.`,
-          hours: 2,
-          presentCharacter: person.id,
-          followUpEncounter: `gm-${fact.id}`,
-        },
-      },
-    ],
-  };
-}
-
-function arrivalEncounter(ground: string, said: string): EncounterDef {
-  const title = actTitle(said);
-  const id = `gm-arrive-${slug(ground)}`;
-  return {
-    id,
-    repeatable: true,
-    text: `You are on ${ground} now. ${sentence(said)} The next hour is this ground, not the trail you already walked.`,
-    choices: [
-      {
-        id: "look",
-        label: `Walk ${ground} and see what it holds`,
-        outcome: {
-          text: `You walk ${ground}. The trail is behind you. This hour is the ground itself.`,
-          hours: 1,
-          meters: { energy: -4 },
-          followUpEncounter: id,
-        },
-      },
-      {
-        id: "stay",
-        label: `Stay on ${ground}`,
-        outcome: {
-          text: `You stay on ${ground}. ${sentence(title)} already got you here.`,
-          hours: 2,
-          followUpEncounter: id,
-        },
-      },
-      {
-        id: "leave",
-        label: `Leave ${ground} for now`,
-        outcome: {
-          text: `You leave ${ground}. Arriving still happened.`,
-          hours: 1,
-        },
-      },
-    ],
-  };
-}
-
-function genericEncounter(facts: StoryFact[], ground: string, said: string): EncounterDef {
+/** Stored for save/polish. Never opened as a Keep / Stay / Leave maze. */
+function residualEncounter(facts: StoryFact[], narration: string): EncounterDef {
   const lead = facts[0];
-  const title = actTitle(said);
-  const name = noThe(lead?.name ?? title);
-  const nouns = Array.from(new Set((lead?.nouns ?? []).filter((n) => n.length > 2)));
-  const obj = noThe(nouns[0] ?? name);
-  const other = noThe(nouns.find((n) => fold(n) !== fold(obj)) ?? "");
-  const id = `gm-${lead?.id ?? slug(said)}`;
-  const note = sentence(lead?.note ?? said);
   return {
-    id,
+    id: `gm-${lead?.id ?? "act"}`,
     repeatable: true,
-    text: fold(note).includes(fold(ground))
-      ? `${note} The next hour is still ${title}.`
-      : `${note} ${ground} has to live with it. The next hour is still ${title}.`,
-    choices: [
-      {
-        id: "continue",
-        label: `Keep ${title}`,
-        outcome: {
-          text: `You keep at it: ${sentence(said)} ${obj} is still the work at ${ground}.`,
-          hours: 2,
-          meters: { energy: -4 },
-          followUpEncounter: id,
-        },
-      },
-      {
-        id: "press",
-        label: other ? `Stay with the ${obj} and the ${other}` : `See what ${obj} does next`,
-        outcome: {
-          text: other
-            ? `${titleCase(obj)} and ${other} stay the story at ${ground}. You do not walk off them.`
-            : `You stay with ${obj} at ${ground}. The hour does not pretend you did something else.`,
-          hours: 2,
-          meters: { energy: -3 },
-          followUpEncounter: id,
-        },
-      },
-      {
-        id: "leave",
-        label: `Leave ${obj} at ${ground}`,
-        outcome: {
-          text: `You leave ${obj} as a fact at ${ground}. ${sentence(title)} already happened.`,
-          hours: 1,
-        },
-      },
-    ],
+    text: narration,
+    choices: [],
   };
 }
 
@@ -693,6 +588,7 @@ function narrate(state: GameState, slots: Slots, locName: string, success: boole
   if (slots.travelName && slots.travelTo) {
     bits.push(`You walk toward ${slots.travelName}.`);
     bits.push(`The ground is ${locName} now.`);
+    if (!success) bits.push("The trail takes more out of you than it should.");
   } else if (slots.unknownPlace) {
     bits.push(`You take a side trail toward ${slots.unknownPlace}. The map did not have it. It has it now.`);
   } else if (slots.inventTrail) {
@@ -757,7 +653,31 @@ function narrate(state: GameState, slots: Slots, locName: string, success: boole
     );
   }
 
-  if (isWoodAsk(fold(slots.raw))) {
+  if (isFireAsk(fold(slots.raw))) {
+    bits.push(
+      success
+        ? `You make a fire at ${locName}. Punk, breath, a coal. Heat finds the bones.`
+        : `You try to make a fire at ${locName}. The spark dies. The hour is colder for the trying.`,
+    );
+  } else if (isTendAsk(fold(slots.raw))) {
+    bits.push(
+      success
+        ? "You tend the fire. Warmth is a small country you keep."
+        : "The fire thinks of dying. You do not quite talk it out of it.",
+    );
+  }
+
+  const raise = raiseTarget(fold(slots.raw));
+  if (raise?.kind === "raise") {
+    const work = WORKS.find((w) => w.id === raise.work);
+    const name = work?.label.toLowerCase() ?? "the work";
+    bits.push(success ? `You raise ${name} at ${locName}.` : `You try to raise ${name}. It does not stand.`);
+  } else if (raise?.kind === "build") {
+    const name = raise.piece === "leanTo" ? "a lean-to" : "the work";
+    bits.push(success ? `You raise ${name} at ${locName}.` : `You try to raise ${name}. It does not stand.`);
+  }
+
+  if (isWoodAsk(fold(slots.raw)) && !isFireAsk(fold(slots.raw))) {
     bits.push(`You walk ${locName} for firewood.`);
     bits.push(
       success
@@ -805,6 +725,11 @@ export function interpretAct(state: GameState, text: string, success: boolean): 
   let standing: GmAct["standing"];
   let present = state.presentCharacterId;
   let locId = state.locationId;
+  let lightFire = false;
+  let campfireHours: number | undefined;
+  let tendHours: number | undefined;
+  let raiseWork: HomesteadWorkId | undefined;
+  let buildPiece: CampPiece | undefined;
 
   const walk = walkTarget(state, slots);
   if (walk) {
@@ -868,7 +793,113 @@ export function interpretAct(state: GameState, text: string, success: boolean): 
   }
 
   const line = fold(slots.raw);
-  if (isWoodAsk(line) && !slots.objects.includes("snow cave")) {
+  const lighting = isFireAsk(line);
+  const tending = isTendAsk(line);
+  const raise = raiseTarget(line);
+  if (lighting) {
+    hours = Math.max(hours, 1);
+    const fatwood = state.inventory.extras.includes("fatwood");
+    const bankedReady =
+      (state.camp?.locationId === state.locationId && state.camp?.cache.extras.includes("banked-coals")) ||
+      state.inventory.extras.includes("banked-coals");
+    const haveWood = state.inventory.firewood > 0;
+    const blizzardBlocked = state.weather === "blizzard" && !fatwood && !bankedReady;
+    const canLight = haveWood && !blizzardBlocked;
+    if (success && canLight) {
+      lightFire = true;
+      campfireHours =
+        (state.weather === "blizzard" ? 4 : 10) + (state.inventory.extras.includes("fire-drill") ? 2 : 0);
+      inventory = { ...(inventory ?? {}), firewood: -1 };
+      meters.warmth = fatwood ? 38 : 28;
+      if (bankedReady) {
+        meters.warmth = (meters.warmth ?? 0) + 12;
+        extraRemove = extraRemove ?? "banked-coals";
+      }
+      if (state.weather === "blizzard" && fatwood) extraRemove = "fatwood";
+    } else if (haveWood && !blizzardBlocked && !success) {
+      inventory = { ...(inventory ?? {}), firewood: -1 };
+      meters.warmth = (meters.warmth ?? 0) - 2;
+    }
+    upsertFact(facts, {
+      id: factId("act", "fire", locId),
+      kind: "act",
+      name: "fire",
+      nouns: ["fire", ...slots.objects],
+      locationId: locId,
+      said: slots.raw,
+      note: success && canLight ? `A fire is going at ${ground}.` : `A fire was attempted at ${ground}.`,
+      status: "present",
+      dayOfYear: state.dayOfYear,
+      hour: state.hour,
+    });
+  } else if (tending) {
+    hours = Math.max(hours, 1);
+    if (state.campfire && success) {
+      tendHours = state.inventory.firewood > 0 ? 3 : 0;
+      if (state.inventory.firewood > 0) inventory = { ...(inventory ?? {}), firewood: -1 };
+      meters.warmth = 14;
+    } else if (state.campfire) {
+      meters.warmth = 4;
+    }
+    upsertFact(facts, {
+      id: factId("act", "tend fire", locId),
+      kind: "act",
+      name: "tend fire",
+      nouns: ["fire"],
+      locationId: locId,
+      said: slots.raw,
+      note: `The fire was tended at ${ground}.`,
+      status: "present",
+      dayOfYear: state.dayOfYear,
+      hour: state.hour,
+    });
+  } else if (raise) {
+    hours = Math.max(hours, 1);
+    if (raise.kind === "raise") {
+      const can = canRaise(state, raise.work);
+      const work = WORKS.find((w) => w.id === raise.work);
+      if (success && can.ok) {
+        raiseWork = raise.work;
+        hours = Math.max(hours, work?.kind === "job" ? 1 : (work?.hours ?? 1));
+      }
+      upsertFact(facts, {
+        id: factId("act", work?.label ?? raise.work, locId),
+        kind: "act",
+        name: work?.label ?? raise.work,
+        nouns: [work?.label ?? raise.work, "raise"],
+        locationId: locId,
+        said: slots.raw,
+        note: success && can.ok
+          ? `${work?.label ?? raise.work} started at ${ground}.`
+          : `${work?.label ?? raise.work} was attempted at ${ground}. ${can.reason ?? "It did not stand."}`,
+        status: "present",
+        dayOfYear: state.dayOfYear,
+        hour: state.hour,
+      });
+    } else {
+      const own = atOwnCamp(state);
+      const woodNeed = raise.piece === "leanTo" ? 2 : raise.piece === "woodpile" || raise.piece === "fireRing" ? 1 : 0;
+      const canBuild = own && state.inventory.firewood + (state.camp?.cache.firewood ?? 0) >= woodNeed;
+      if (success && canBuild) {
+        buildPiece = raise.piece;
+        hours = Math.max(hours, 2);
+      }
+      upsertFact(facts, {
+        id: factId("act", raise.piece, locId),
+        kind: "act",
+        name: raise.piece === "leanTo" ? "lean-to" : raise.piece,
+        nouns: [raise.piece === "leanTo" ? "lean-to" : raise.piece],
+        locationId: locId,
+        said: slots.raw,
+        note: success && canBuild
+          ? `The ${raise.piece === "leanTo" ? "lean-to" : raise.piece} stands at ${ground}.`
+          : `The ${raise.piece === "leanTo" ? "lean-to" : raise.piece} was attempted at ${ground}.`,
+        status: "present",
+        dayOfYear: state.dayOfYear,
+        hour: state.hour,
+      });
+    }
+  } else if (isWoodAsk(line) && !slots.objects.includes("snow cave")) {
     hours = Math.max(hours, 2);
     inventory = { ...(inventory ?? {}), firewood: success ? 2 : 1 };
     upsertFact(facts, {
@@ -1096,18 +1127,7 @@ export function interpretAct(state: GameState, text: string, success: boolean): 
   }
 
   const narration = narrate(state, slots, ground, success, extras);
-  const caveFact = facts.find((f) => f.kind === "shelter");
-  const doeFact = facts.find((f) => f.kind === "animal");
-  const personFact = facts.find((f) => f.kind === "person");
-  const genPerson = people[0];
-  let encounter: EncounterDef;
-  const rich = Boolean(caveFact || doeFact || personFact || isWoodAsk(line) || isWaterAsk(line));
-  if (caveFact) encounter = caveEncounter(caveFact, ground);
-  else if (doeFact) encounter = doeEncounter(doeFact, ground);
-  else if (personFact && genPerson) encounter = personEncounter(genPerson, personFact, slots.objects.find((o) => o.includes("kettle")) ?? null);
-  else if (relocate && !rich) encounter = arrivalEncounter(ground, slots.raw);
-  else encounter = genericEncounter(facts, ground, slots.raw);
-
+  let encounter = residualEncounter(facts, narration);
   if (present && encounter.characterId == null && (slots.song || slots.gift || slots.lie || slots.accuse)) {
     encounter = { ...encounter, characterId: present };
   }
@@ -1132,6 +1152,11 @@ export function interpretAct(state: GameState, text: string, success: boolean): 
     narration,
     encounter,
     focusFactIds: facts.map((f) => f.id),
+    lightFire,
+    campfireHours,
+    tendHours,
+    raiseWork,
+    buildPiece,
   };
 }
 
