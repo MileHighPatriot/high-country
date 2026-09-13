@@ -1889,6 +1889,45 @@ export function applyGmAct(state: GameState, act: GmAct, roll?: RollResult): Gam
     act,
   );
   if (roll) next = appendLog(next, rollLine(roll, act.label), roll);
+
+  if (act.lightFire) {
+    next = {
+      ...next,
+      campfire: true,
+      campfireHours: act.campfireHours ?? (next.weather === "blizzard" ? 4 : 10),
+      camp: next.camp ? cloneCamp(next.camp) : next.camp,
+    };
+    if (atOwnCamp(next) && next.camp) {
+      next.camp.smoke = Math.min(5, next.camp.smoke + 1);
+      if (next.camp.cache.extras.includes("banked-coals")) {
+        next.camp.cache.extras = next.camp.cache.extras.filter((e) => e !== "banked-coals");
+      }
+    }
+  } else if (act.tendHours != null && next.campfire) {
+    next = {
+      ...next,
+      campfire: true,
+      campfireHours: fireHoursLeft(next) + act.tendHours,
+    };
+  }
+
+  if (act.raiseWork) {
+    const started = startRaise(next, act.raiseWork);
+    if (!("error" in started)) {
+      next = withPractice(started.state, "camp", true);
+    }
+  } else if (act.buildPiece && atOwnCamp(next) && next.camp) {
+    const need =
+      act.buildPiece === "leanTo" ? 2 : act.buildPiece === "woodpile" || act.buildPiece === "dryingRack" ? 1 : 0;
+    const spent = need ? spendFromPackOrCache(next, "firewood", need) : next;
+    if (spent?.camp && !spent.camp[act.buildPiece]) {
+      next = spent;
+      next.camp = cloneCamp(next.camp!);
+      next.camp[act.buildPiece] = true;
+      next = withPractice(next, "camp", true);
+    }
+  }
+
   next = applyOutcome(next, {
     text: act.narration,
     hours: act.hours,
@@ -1901,7 +1940,7 @@ export function applyGmAct(state: GameState, act: GmAct, roll?: RollResult): Gam
     presentCharacter: act.presentCharacterId,
   });
   if (next.dead || next.skirmish) return next;
-  return beginEncounter(next, act.encounter);
+  return { ...next, activeEncounterId: null };
 }
 
 function resolvePresentedOwnWords(state: GameState, option: EncounterChoice, said: string): GameState {
@@ -1930,8 +1969,11 @@ function resolveAttempt(state: GameState, text: string): GameState {
   const trimmed = text.trim();
   if (!trimmed) return appendLog(state, "You stand there with an unfinished sentence.");
   const verb = campVerbOf(trimmed);
-  if (verb) {
+  if (verb === "eat" || verb === "drink" || verb === "sleep") {
     return applyAction({ ...state, activeEncounterId: null, pendingRoll: null, waitScene: null }, { type: verb });
+  }
+  if (verb === "rest") {
+    return applyAction({ ...state, activeEncounterId: null, pendingRoll: null, waitScene: null }, { type: "restWatch" });
   }
   const enc = getActiveEncounter(state);
   if (enc) {
@@ -1953,14 +1995,11 @@ function resolveAttempt(state: GameState, text: string): GameState {
   }
   base = { ...base, pendingRoll: null, activeEncounterId: null };
   const draft = interpretAct(base, trimmed, true);
-  if (draft.risky) {
-    const armed = armActionDie(base, draft.label, draft.trait, draft.dc, { type: "attempt", text: trimmed });
-    if (armed.kind === "armed") return armed.state;
-    const roll = armed.roll;
-    const act = interpretAct({ ...armed.state, pendingRoll: null }, trimmed, roll.success);
-    return applyGmAct({ ...armed.state, pendingRoll: null }, act, roll);
-  }
-  return applyGmAct(base, interpretAct(base, trimmed, true));
+  const armed = armActionDie(base, draft.label, draft.trait, draft.dc, { type: "attempt", text: trimmed });
+  if (armed.kind === "armed") return armed.state;
+  const roll = armed.roll;
+  const act = interpretAct({ ...armed.state, pendingRoll: null }, trimmed, roll.success);
+  return applyGmAct({ ...armed.state, pendingRoll: null }, act, roll);
 }
 
 export function applyAction(state: GameState, action: GameAction): GameState {
