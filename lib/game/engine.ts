@@ -64,7 +64,13 @@ import {
   stoneGround,
   workById,
 } from "@/lib/game/homestead";
-import { isLiveTalk, liveTalkEncounter } from "@/lib/game/talk";
+import {
+  isLiveTalk,
+  liveTalkCharacterId,
+  liveTalkContinues,
+  liveTalkEncounter,
+  liveTalkId,
+} from "@/lib/game/talk";
 import { peopleAt, placePerson, seedWorld, syncPresence, tickWorldHour } from "@/lib/game/world";
 import { withBase } from "@/lib/paths";
 import type {
@@ -361,20 +367,139 @@ function castPendingDie(state: GameState): GameState {
   };
 }
 
+function isRollMathLine(text: string) {
+  const t = text.trim();
+  return /(?:^|.+ — )d20 \d+ \+ \S+ .+ = -?\d+ vs DC \d+ — (success|fail)\.?$/i.test(t);
+}
+
+function fallbackRollProse(label: string, success: boolean) {
+  const act = label.trim() || "The attempt";
+  return success ? `${act} holds. The hour takes it as done.` : `${act} comes apart in the hands.`;
+}
+
+function hasOutcomeProse(state: GameState, sinceLength: number) {
+  return state.log.slice(sinceLength).some((e) => e.text.trim().length > 20 && !isRollMathLine(e.text));
+}
+
+function isSoftFollowUpEncounter(enc: EncounterDef | undefined) {
+  if (!enc) return false;
+  if (isLeftoverActMaze(enc)) return true;
+  return enc.choices.length > 0 && enc.choices.every((c) => isSoftFollowUpLabel(c.label));
+}
+
+/** Leftover Keep/Stay/Leave mazes must not sit on the dock after a roll. */
+function swallowSoftFollowUp(state: GameState): GameState {
+  const generated = (state.generatedEncounters ?? []).filter((e) => !isLeftoverActMaze(e));
+  let next: GameState = generated === state.generatedEncounters ? state : { ...state, generatedEncounters: generated };
+  if (!next.activeEncounterId) return next;
+  const enc = encounterById(next, next.activeEncounterId);
+  if (!enc || isSoftFollowUpEncounter(enc)) {
+    return { ...next, activeEncounterId: null };
+  }
+  return next;
+}
+
+function ensureOutcomeProse(state: GameState, label: string, success: boolean, sinceLength: number): GameState {
+  if (hasOutcomeProse(state, sinceLength)) return state;
+  return appendLog(state, fallbackRollProse(label, success));
+}
+
+function settleResolved(state: GameState, label: string, success: boolean, sinceLength: number): GameState {
+  let next = swallowSoftFollowUp({ ...state, pendingRoll: null });
+  next = ensureOutcomeProse(next, label, success, sinceLength);
+  return next;
+}
+
+function keepTalkFrom(option: EncounterChoice) {
+  return Boolean(option.outcome?.nextDialogue || option.success?.nextDialogue || option.fail?.nextDialogue);
+}
+
+function settleTalk(state: GameState, option: EncounterChoice, prevEnc: string | null | undefined): GameState {
+  if (liveTalkContinues(prevEnc, option.id)) {
+    const who = state.presentCharacterId ?? liveTalkCharacterId(prevEnc);
+    if (who) {
+      const seated = state.presentCharacterId === who ? state : placePerson(state, who, state.locationId);
+      return { ...seated, activeEncounterId: liveTalkId(who) };
+    }
+  }
+  return releaseTalk(state, keepTalkFrom(option), prevEnc);
+}
+
+function dialogueNodeOf(state: GameState, who: CharacterId | null | undefined, nodeId: string) {
+  const person = (who ? characterOf(state, who) : undefined) ?? (who ? CHARACTER_BY_ID[who] : undefined);
+  const node = person?.nodes.find((n) => n.id === nodeId);
+  if (node && who) return { who, node };
+  for (const p of CHARACTERS) {
+    const n = p.nodes.find((nn) => nn.id === nodeId);
+    if (n) return { who: p.id, node: n };
+  }
+  return null;
+}
+
+function encounterById(state: GameState, id: string | null | undefined): EncounterDef | undefined {
+  if (!id) return undefined;
+  const generated = state.generatedEncounters?.find((e) => e.id === id);
+  if (generated) return generated;
+  const fromBook = allEncounters().find((e) => e.id === id);
+  if (fromBook) return fromBook;
+  const liveWho = liveTalkCharacterId(id) ?? (isLiveTalk(id) ? state.presentCharacterId : null);
+  if (liveWho) return liveTalkEncounter(state, liveWho);
+  if (id.startsWith("dlg-")) {
+    const nodeId = id.replace(/^dlg-/, "");
+    const hit = dialogueNodeOf(state, state.presentCharacterId, nodeId);
+    if (hit) {
+      return { id: `dlg-${hit.node.id}`, characterId: hit.who, text: hit.node.text, choices: hit.node.choices };
+    }
+  }
+  if (id.startsWith("chore-")) return choreEncounter(state, choreKindFromId(id));
+  return undefined;
+}
+
+function applyRolledOption(
+  state: GameState,
+  option: EncounterChoice,
+  roll: RollResult | null,
+  prevEnc: string | null | undefined,
+  label: string,
+): GameState {
+  const stayLive = liveTalkContinues(prevEnc, option.id);
+  const keepTalk = keepTalkFrom(option);
+  let next = !keepTalk && !stayLive ? { ...state, activeEncounterId: null } : state;
+  const success = roll?.success ?? true;
+  if (option.check) {
+    const branch = roll?.success ? option.success : option.fail;
+    const outcome = branch ?? option.outcome ?? { text: fallbackRollProse(label, success), hours: 1 };
+    next = applyOutcome(next, outcome);
+  } else if (option.outcome) {
+    next = applyOutcome(next, option.outcome);
+  } else {
+    next = appendLog(next, fallbackRollProse(label, success));
+  }
+  return settleTalk(next, option, prevEnc);
+}
+
 function finishPendingDie(state: GameState): GameState {
   const pending = state.pendingRoll;
   if (!pending || pending.d20 == null) return state;
-  if (pending.resume) return applyAction(state, pending.resume);
-  const enc = getActiveEncounter(state) ?? allEncounters().find((e) => e.id === pending.encounterId);
+  const logAt = state.log.length;
+  const success = resultFromPending(pending)?.success ?? pending.success ?? true;
+  if (pending.resume) {
+    const next = applyAction(state, pending.resume);
+    return settleResolved({ ...next, pendingRoll: null }, pending.label, success, logAt);
+  }
+  const enc = encounterById(state, state.activeEncounterId) ?? encounterById(state, pending.encounterId);
   const option = enc?.choices.find((c) => c.id === pending.optionId);
   const roll = resultFromPending(pending);
-  let next: GameState = { ...state, pendingRoll: null, activeEncounterId: null };
+  const prevEnc = state.activeEncounterId ?? pending.encounterId;
+  let next: GameState = { ...state, pendingRoll: null };
   if (roll) next = appendLog(next, rollLine(roll, pending.label), roll);
-  if (option?.check) {
-    const branch = roll?.success ? option.success : option.fail;
-    if (branch) next = applyOutcome(next, branch);
+  if (option) {
+    next = applyRolledOption(next, option, roll, prevEnc, pending.label);
+  } else {
+    next = appendLog(next, fallbackRollProse(pending.label, success));
+    next = { ...next, activeEncounterId: null };
   }
-  return next;
+  return settleResolved(next, pending.label, success, logAt);
 }
 
 export function rollCheck(
@@ -500,6 +625,7 @@ function applyOutcome(state: GameState, outcome: Outcome): GameState {
     const list = memories[id] ?? [];
     if (!list.includes(tag)) next.memories = { ...memories, [id]: [...list, tag] };
   }
+  const speaker = next.presentCharacterId;
   if (outcome.hours) next = advanceTime(next, outcome.hours);
   if (outcome.weather) {
     next.weather = outcome.weather;
@@ -557,24 +683,27 @@ function applyOutcome(state: GameState, outcome: Outcome): GameState {
     next = practiced.state;
     if (practiced.line) next = appendLog(next, practiced.line);
   }
-  if (outcome.nextDialogue && next.presentCharacterId && !next.dead && !next.skirmish) {
-    const person = CHARACTER_BY_ID[next.presentCharacterId];
-    const node = person?.nodes.find((n) => n.id === outcome.nextDialogue);
-    if (node) {
+  if (outcome.nextDialogue && !next.dead && !next.skirmish) {
+    const hit = dialogueNodeOf(next, speaker ?? next.presentCharacterId, outcome.nextDialogue);
+    if (hit) {
+      next = placePerson(next, hit.who, next.locationId);
       next = beginEncounter(next, {
-        id: `dlg-${node.id}`,
-        text: node.text,
-        choices: node.choices,
+        id: `dlg-${hit.node.id}`,
+        characterId: hit.who,
+        text: hit.node.text,
+        choices: hit.node.choices,
       });
     } else {
       next = { ...next, activeEncounterId: null };
     }
   }
   if (outcome.followUpEncounter && !next.dead && !next.skirmish) {
-    const follow =
-      allEncounters().find((e) => e.id === outcome.followUpEncounter) ??
-      next.generatedEncounters?.find((e) => e.id === outcome.followUpEncounter);
-    if (follow && (follow.repeatable || !next.seenEncounterIds.includes(follow.id))) {
+    const follow = encounterById(next, outcome.followUpEncounter);
+    if (
+      follow &&
+      !isSoftFollowUpEncounter(follow) &&
+      (follow.repeatable || !next.seenEncounterIds.includes(follow.id))
+    ) {
       next = beginEncounter(next, follow);
     }
   }
@@ -769,18 +898,7 @@ function maybeRipple(state: GameState, kind: EncounterTrigger, chance: number): 
 }
 
 function getActiveEncounter(state: GameState): EncounterDef | undefined {
-  const id = state.activeEncounterId;
-  if (!id) return undefined;
-  const generated = state.generatedEncounters?.find((e) => e.id === id);
-  if (generated) return generated;
-  const fromBook = allEncounters().find((e) => e.id === id);
-  if (fromBook) return fromBook;
-  if (isLiveTalk(id) && state.presentCharacterId) {
-    return liveTalkEncounter(state, state.presentCharacterId);
-  }
-  if (id.startsWith("dlg-")) return findDialogueEncounter(state);
-  if (id.startsWith("chore-")) return choreEncounter(state, choreKindFromId(id));
-  return undefined;
+  return encounterById(state, state.activeEncounterId);
 }
 
 function presentPeople(state: GameState, _opts?: { ignoreHours?: boolean }) {
@@ -977,19 +1095,25 @@ function resolveEncounterChoice(state: GameState, optionId: string): GameState {
 }
 
 function resolveChoice(state: GameState, option: EncounterChoice, closeEncounter: boolean): GameState {
-  const keepTalk = Boolean(option.outcome?.nextDialogue || option.success?.nextDialogue || option.fail?.nextDialogue);
+  const keepTalk = keepTalkFrom(option);
+  const stayLive = liveTalkContinues(state.activeEncounterId, option.id);
   const prevEnc = state.activeEncounterId;
-  let next = closeEncounter && !keepTalk ? { ...state, activeEncounterId: null } : state;
+  const logAt = state.log.length;
+  let next = closeEncounter && !keepTalk && !stayLive ? { ...state, activeEncounterId: null } : state;
   if (option.check) {
     const rolled = rollCheck(next, option.check.trait, option.check.dc);
     next = rolled.state;
     const branch = rolled.roll.success ? option.success : option.fail;
     next = appendLog(next, rollLine(rolled.roll), rolled.roll);
-    if (branch) next = applyOutcome(next, branch);
-    return releaseTalk(next, keepTalk, prevEnc);
+    const outcome = branch ?? option.outcome ?? { text: fallbackRollProse(option.label, rolled.roll.success), hours: 1 };
+    next = applyOutcome(next, outcome);
+    next = settleTalk(next, option, prevEnc);
+    return settleResolved(next, option.label, rolled.roll.success, logAt);
   }
   if (option.outcome) next = applyOutcome(next, option.outcome);
-  return releaseTalk(next, keepTalk, prevEnc);
+  else next = appendLog(next, fallbackRollProse(option.label, true));
+  next = settleTalk(next, option, prevEnc);
+  return settleResolved(next, option.label, true, logAt);
 }
 
 /** If a talk beat promised another node and it never opened, drop the encounter so the dock is not empty. */
@@ -1892,16 +2016,16 @@ function mergeGenerated(state: GameState, act: GmAct): GameState {
 
 /** After a typed act's die is spent: idle camp, never a Keep/Stay/Leave follow-up. */
 function idleAfterTypedAct(state: GameState): GameState {
-  return {
+  return swallowSoftFollowUp({
     ...state,
     activeEncounterId: null,
     pendingRoll: null,
     waitScene: null,
-    generatedEncounters: (state.generatedEncounters ?? []).filter((e) => !isLeftoverActMaze(e)),
-  };
+  });
 }
 
 export function applyGmAct(state: GameState, act: GmAct, roll?: RollResult): GameState {
+  const logAt = state.log.length;
   let next = mergeGenerated(
     { ...state, activeEncounterId: null, pendingRoll: null, waitScene: null },
     act,
@@ -1958,7 +2082,7 @@ export function applyGmAct(state: GameState, act: GmAct, roll?: RollResult): Gam
     presentCharacter: act.presentCharacterId,
   });
   if (next.dead || next.skirmish) return next;
-  return idleAfterTypedAct(next);
+  return settleResolved(idleAfterTypedAct(next), act.label, roll?.success ?? true, logAt);
 }
 
 function resolvePresentedOwnWords(state: GameState, option: EncounterChoice, said: string): GameState {
@@ -2578,17 +2702,6 @@ export function getChoices(state: GameState): Choice[] {
     });
   }
   return campChoices(state);
-}
-
-function findDialogueEncounter(state: GameState): EncounterDef | undefined {
-  const id = state.presentCharacterId;
-  if (!id) return undefined;
-  const person = CHARACTER_BY_ID[id];
-  if (!person) return undefined;
-  const nodeId = state.activeEncounterId?.replace(/^dlg-/, "");
-  const node = person.nodes.find((n) => n.id === nodeId);
-  if (!node) return undefined;
-  return { id: `dlg-${node.id}`, text: node.text, choices: node.choices };
 }
 
 export function locationName(id: LocationId, state?: GameState) {
