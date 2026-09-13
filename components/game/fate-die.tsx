@@ -42,6 +42,7 @@ export function FateDie({
   pending,
   retreats,
   scene,
+  held,
   onCast,
   onSettled,
   onRetreat,
@@ -49,11 +50,13 @@ export function FateDie({
   pending: PendingRoll;
   retreats: Choice[];
   scene?: string;
+  held?: boolean;
   onCast: () => void;
   onSettled: () => void;
   onRetreat: (choice: Choice) => void;
 }) {
   const [phase, setPhase] = useState<"idle" | "rolling" | "landed">(pending.d20 != null ? "landed" : "idle");
+  const [spent, setSpent] = useState(false);
   const settled = useRef(false);
   const cast = useRef(pending.d20 != null);
   const onSettledRef = useRef(onSettled);
@@ -68,9 +71,17 @@ export function FateDie({
 
   const rollKey = `${pending.label}|${pending.trait}|${pending.dc}|${pending.optionId ?? ""}`;
 
+  function settle() {
+    if (settled.current) return;
+    settled.current = true;
+    setSpent(true);
+    onSettledRef.current();
+  }
+
   useEffect(() => {
     settled.current = false;
     cast.current = pending.d20 != null;
+    setSpent(false);
     setPhase(pending.d20 != null ? "landed" : "idle");
   }, [rollKey]);
 
@@ -88,17 +99,13 @@ export function FateDie({
 
   useEffect(() => {
     if (phase !== "landed" || pending.d20 == null || settled.current) return;
-    const wait = pending.d20 != null && !cast.current ? 900 : 1600;
-    const t = window.setTimeout(() => {
-      if (settled.current) return;
-      settled.current = true;
-      onSettledRef.current();
-    }, wait);
+    const wait = !cast.current ? 900 : 1600;
+    const t = window.setTimeout(() => settle(), wait);
     return () => window.clearTimeout(t);
   }, [phase, pending.d20]);
 
   function roll() {
-    if (phase !== "idle") return;
+    if (phase !== "idle" || spent) return;
     cast.current = true;
     if (pending.d20 == null) onCastRef.current();
     else setPhase("rolling");
@@ -108,7 +115,14 @@ export function FateDie({
   const total = pending.total ?? (pending.d20 ?? 0) + pending.modifier - pending.penalty;
 
   return (
-    <div className="fate-die-overlay" role="dialog" aria-label="The die">
+    <div
+      className="fate-die-overlay"
+      role="dialog"
+      aria-label="The die"
+      data-hc="fate-die"
+      data-spent={spent ? "1" : "0"}
+      data-held={held ? "1" : "0"}
+    >
       <div className="fate-die-panel">
         <p className="fate-die-kicker">The mountain waits</p>
         {scene && <p className="fate-die-scene">{scene}</p>}
@@ -161,16 +175,11 @@ export function FateDie({
               {pending.penalty ? ` − ${pending.penalty}` : ""} = {total} vs {pending.dc}
               {success ? " — you hold." : " — it takes you."}
             </p>
-            <Button
-              size="sm"
-              className="mt-3"
-              onClick={() => {
-                settled.current = true;
-                onSettledRef.current();
-              }}
-            >
-              Continue
-            </Button>
+            {!spent && (
+              <Button size="sm" className="mt-3" onClick={settle}>
+                Continue
+              </Button>
+            )}
           </div>
         )}
 

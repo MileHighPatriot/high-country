@@ -624,6 +624,7 @@ export function PlayScreen() {
   const [lookBook, setLookBook] = useState<null | "trails" | "builds">(null);
   const [intent, setIntent] = useState("");
   const [listening, setListening] = useState(false);
+  const [heldDie, setHeldDie] = useState<PendingRoll | null>(null);
   const holdTimer = useRef<number>(0);
   const journalEnd = useRef<HTMLDivElement>(null);
   const intentBox = useRef<HTMLInputElement>(null);
@@ -661,6 +662,33 @@ export function PlayScreen() {
   const choices = useMemo(() => (state ? getChoices(state) : []), [state]);
   const scene = useMemo(() => (state ? getScene(state, choices) : null), [state, choices]);
   const art = state ? artFor(state) : null;
+  const hero = useMemo(
+    () => choices.filter((c) => choiceTier(c) === "hero" && !isSoftFollowUpLabel(c.label)),
+    [choices],
+  );
+  const urgentHero = useMemo(
+    () => (hero.length > 0 ? hero : choices.filter((c) => choiceTier(c) === "hero")),
+    [hero, choices],
+  );
+  const idle = Boolean(state && !isUrgentBeat(state));
+  const presented = state && (state.skirmish || state.activeEncounterId || state.waitScene) ? urgentHero : [];
+  const canChoose = Boolean(state && idle && !state.waitScene && !listening);
+  const lastLog = state?.log.at(-1);
+  const journalReady = Boolean(lastLog?.text?.trim());
+  const nextPromptExist =
+    presented.length > 0 || Boolean(idle && scene && scene.narration !== lastLog?.text);
+  const idleChoicesExist = canChoose;
+  const dieMayUnmount = (journalReady && nextPromptExist) || idleChoicesExist;
+  const diePending = state?.pendingRoll ?? heldDie;
+  const showDie = Boolean(state?.pendingRoll) || (Boolean(heldDie) && !dieMayUnmount);
+
+  useEffect(() => {
+    if (state?.pendingRoll) setHeldDie(state.pendingRoll);
+  }, [state?.pendingRoll]);
+
+  useEffect(() => {
+    if (!state?.pendingRoll && heldDie && dieMayUnmount) setHeldDie(null);
+  }, [state?.pendingRoll, heldDie, dieMayUnmount]);
 
   function commit(prev: GameState, action: GameAction) {
     const next = applyAction(prev, action);
@@ -756,9 +784,6 @@ export function PlayScreen() {
   }
 
   const spots = !state.activeEncounterId && !state.skirmish ? campHotspots(state) : [];
-  const hero = choices.filter((c) => choiceTier(c) === "hero" && !isSoftFollowUpLabel(c.label));
-  const idle = !isUrgentBeat(state);
-  const presented = state.skirmish || state.activeEncounterId ? hero : [];
   const atmosphere = timeAtmosphere(state, art.atmosphere);
   const tell = livingTellFromState(state);
   const log = state.skirmish ? state.log.slice(-6) : state.log;
@@ -770,7 +795,6 @@ export function PlayScreen() {
   const sayFill = state.presentCharacterId
     ? `I say to ${characterOf(state, state.presentCharacterId)?.name ?? "them"} `
     : "";
-  const canChoose = idle && !state.waitScene && !listening;
 
   return (
     <div
@@ -882,15 +906,17 @@ export function PlayScreen() {
                 </Button>
               </form>
             )}
-            {state.pendingRoll ? (
+            {showDie && diePending ? (
               <FateDie
-                pending={state.pendingRoll}
+                pending={diePending}
                 retreats={hero}
                 scene={state.log[state.log.length - 1]?.text}
+                held={!state.pendingRoll}
                 onCast={() => setState((s) => (s ? applyAction(s, { type: "castDie" }) : s))}
                 onSettled={() => {
                   setState((s) => {
-                    if (!s) return s;
+                    if (!s?.pendingRoll) return s;
+                    setHeldDie(s.pendingRoll);
                     const next = applyAction(s, { type: "finishDie" });
                     const seq = cinemaAfterAction(s, next);
                     if (seq) {
@@ -908,6 +934,8 @@ export function PlayScreen() {
                   choiceHold && "is-held",
                   livingTellFrostsChrome(tell) && "hc-live-frost",
                 )}
+                data-hc="choices"
+                data-idle-choices={idleChoicesExist ? "1" : "0"}
               >
                 {presented.length > 0 && (
                   <div className="flex flex-wrap gap-2">
