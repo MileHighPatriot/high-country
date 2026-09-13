@@ -48,6 +48,8 @@ import { characterOf, locationOf, placeTitle } from "@/lib/game/atlas";
 import {
   campVerbOf,
   interpretAct,
+  isLeftoverActMaze,
+  isSoftFollowUpLabel,
   matchPresentedOption,
   playerProse,
   type GmAct,
@@ -1873,14 +1875,30 @@ function mergeGenerated(state: GameState, act: GmAct): GameState {
       };
     }
   }
-  next.generatedEncounters = [
-    ...next.generatedEncounters!.filter((e) => e.id !== act.encounter.id),
-    act.encounter,
-  ];
+  // Residual gm-* stubs and old Keep/Stay/Leave mazes are not live scenes.
+  next.generatedEncounters = next.generatedEncounters!.filter(
+    (e) => e.id !== act.encounter.id && !isLeftoverActMaze(e),
+  );
+  const liveFollowUp =
+    act.encounter.choices.length > 0 && !act.encounter.choices.some((c) => isSoftFollowUpLabel(c.label));
+  if (liveFollowUp) {
+    next.generatedEncounters = [...next.generatedEncounters, act.encounter];
+  }
   if (act.rumors.length && next.world) {
     next = { ...next, world: { ...next.world, rumors: [...next.world.rumors, ...act.rumors] } };
   }
   return next;
+}
+
+/** After a typed act's die is spent: idle camp, never a Keep/Stay/Leave follow-up. */
+function idleAfterTypedAct(state: GameState): GameState {
+  return {
+    ...state,
+    activeEncounterId: null,
+    pendingRoll: null,
+    waitScene: null,
+    generatedEncounters: (state.generatedEncounters ?? []).filter((e) => !isLeftoverActMaze(e)),
+  };
 }
 
 export function applyGmAct(state: GameState, act: GmAct, roll?: RollResult): GameState {
@@ -1940,7 +1958,7 @@ export function applyGmAct(state: GameState, act: GmAct, roll?: RollResult): Gam
     presentCharacter: act.presentCharacterId,
   });
   if (next.dead || next.skirmish) return next;
-  return { ...next, activeEncounterId: null };
+  return idleAfterTypedAct(next);
 }
 
 function resolvePresentedOwnWords(state: GameState, option: EncounterChoice, said: string): GameState {
