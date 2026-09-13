@@ -20,7 +20,7 @@ import { atOwnCamp, buildHours, buildLabel, campHotspots } from "@/lib/game/camp
 import { cinemaAfterAction, type CinemaSequence } from "@/lib/game/cinema";
 import { characterOf, locationOf } from "@/lib/game/atlas";
 import { CHARACTER_BY_ID } from "@/lib/game/content/characters";
-import { campVerbOf, interpretAct } from "@/lib/game/gm";
+import { campVerbOf, interpretAct, isSoftFollowUpLabel } from "@/lib/game/gm";
 import { loadGmKey, overlayPolish, polishGmAct, saveGmKey } from "@/lib/game/gm-model";
 import {
   applyAction,
@@ -756,7 +756,7 @@ export function PlayScreen() {
   }
 
   const spots = !state.activeEncounterId && !state.skirmish ? campHotspots(state) : [];
-  const hero = choices.filter((c) => choiceTier(c) === "hero");
+  const hero = choices.filter((c) => choiceTier(c) === "hero" && !isSoftFollowUpLabel(c.label));
   const idle = !isUrgentBeat(state);
   const presented = state.skirmish || state.activeEncounterId ? hero : [];
   const atmosphere = timeAtmosphere(state, art.atmosphere);
