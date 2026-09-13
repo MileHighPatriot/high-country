@@ -766,7 +766,7 @@ export function PlayScreen() {
   const trails = trailLookBook(state);
   const builds = buildLookBook(state);
   const lookEntries = lookBook === "trails" ? trails : lookBook === "builds" ? builds : [];
-  const stake = stakeCopy(state, intent, state.pendingRoll);
+  const stake = stakeCopy(state, intent, state.pendingRoll ?? null);
   const sayFill = state.presentCharacterId
     ? `I say to ${characterOf(state, state.presentCharacterId)?.name ?? "them"} `
     : "";
