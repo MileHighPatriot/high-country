@@ -16,11 +16,11 @@ import {
   SheetTitle,
   SheetTrigger,
 } from "@/components/ui/sheet";
-import { campHotspots } from "@/lib/game/camp";
+import { atOwnCamp, buildHours, buildLabel, campHotspots } from "@/lib/game/camp";
 import { cinemaAfterAction, type CinemaSequence } from "@/lib/game/cinema";
 import { characterOf, locationOf } from "@/lib/game/atlas";
 import { CHARACTER_BY_ID } from "@/lib/game/content/characters";
-import { interpretAct } from "@/lib/game/gm";
+import { campVerbOf, interpretAct } from "@/lib/game/gm";
 import { loadGmKey, overlayPolish, polishGmAct, saveGmKey } from "@/lib/game/gm-model";
 import {
   applyAction,
@@ -39,12 +39,13 @@ import {
   METER_LABELS,
   placeName,
   skillStatusLine,
+  trailHours,
 } from "@/lib/game/readout";
-import type { Choice, GameAction, GameState, Kit, LogEntry } from "@/lib/game/types";
+import type { CampPiece, Choice, GameAction, GameState, Kit, LogEntry, PendingRoll } from "@/lib/game/types";
 import { timeBand } from "@/lib/game/types";
 import { cn } from "@/lib/utils";
 import { livingTellFromState, livingTellFrostsChrome } from "@/lib/game/living-plate";
-import { dwellingLine } from "@/lib/game/homestead";
+import { canRaise, dwellingLine, hasWork, WORKS } from "@/lib/game/homestead";
 import { getScene } from "@/lib/game/scene";
 import { peopleAt } from "@/lib/game/world";
 import { withBase } from "@/lib/paths";
@@ -77,10 +78,6 @@ function choiceTier(choice: Choice): NonNullable<Choice["tier"]> {
   if (choice.tier) return choice.tier;
   if (choice.action.type === "travel") return "travel";
   return "hero";
-}
-
-function actionKey(choice: Choice) {
-  return JSON.stringify(choice.action);
 }
 
 function isUrgentBeat(state: GameState) {
@@ -309,6 +306,121 @@ function findChoice(choices: Choice[], pred: (c: Choice) => boolean) {
   return choices.find(pred);
 }
 
+const TRAIT_NAME = { eye: "Eye", grit: "Grit", savvy: "Savvy", hands: "Hands" } as const;
+
+const BODY_ACTS = [
+  { id: "eat", label: "eat", action: { type: "eat" } as const },
+  { id: "drink", label: "drink", action: { type: "drink" } as const },
+  { id: "sleep", label: "sleep", action: { type: "sleep" } as const },
+  { id: "rest", label: "rest", action: { type: "restWatch" } as const },
+] as const;
+
+const CAMP_LOOK_PIECES: CampPiece[] = ["leanTo", "fireRing", "woodpile", "cachePit", "dryingRack"];
+
+type LookEntry = { id: string; label: string; cost: string; command: string };
+
+function pieceCommand(piece: CampPiece) {
+  return {
+    leanTo: "raise a lean-to",
+    fireRing: "build a fire ring",
+    woodpile: "build a woodpile",
+    cachePit: "build a cache pit",
+    dryingRack: "raise a drying rack",
+    pot: "rig a pot",
+  }[piece];
+}
+
+function pieceCost(piece: CampPiece) {
+  const hours = buildHours(piece);
+  const wood = piece === "leanTo" ? 2 : piece === "woodpile" || piece === "dryingRack" || piece === "fireRing" ? 1 : 0;
+  return [wood ? `${wood} wood` : null, `${hours} hr`].filter(Boolean).join(" · ");
+}
+
+function workCostLine(work: (typeof WORKS)[number], reason?: string) {
+  const bits = [work.kind === "job" ? `${work.hours} hr job` : `${work.hours} hr`];
+  if (work.logs) bits.push(`${work.logs} logs`);
+  if (work.stone) bits.push(`${work.stone} stone`);
+  if (work.pelts) bits.push(`${work.pelts} pelts`);
+  if (work.firewood) bits.push(`${work.firewood} wood`);
+  if (work.tools?.length) bits.push(work.tools.join(" · "));
+  if (reason) bits.push(reason);
+  return bits.join(" · ");
+}
+
+function trailLookBook(state: GameState): LookEntry[] {
+  const loc = locationOf(state, state.locationId);
+  const seen = new Set<string>();
+  const out: LookEntry[] = [];
+  for (const edge of loc?.connections ?? []) {
+    if (seen.has(edge.to)) continue;
+    seen.add(edge.to);
+    const dest = locationOf(state, edge.to)?.name ?? placeName(edge.to, state);
+    out.push({
+      id: `trail-${edge.to}`,
+      label: dest,
+      cost: `${trailHours(state, edge.hours)} hr · ${edge.trailName}`,
+      command: `walk to ${dest}`,
+    });
+  }
+  for (const place of state.generatedPlaces ?? []) {
+    if (place.id === state.locationId || seen.has(place.id)) continue;
+    if (place.parentId !== state.locationId && !state.knownLocations.includes(place.id)) continue;
+    seen.add(place.id);
+    out.push({
+      id: `trail-${place.id}`,
+      label: place.name,
+      cost: `${trailHours(state, place.hours)} hr · ${place.trailName}`,
+      command: `walk to ${place.name}`,
+    });
+  }
+  return out;
+}
+
+function buildLookBook(state: GameState): LookEntry[] {
+  const out: LookEntry[] = [];
+  const here = atOwnCamp(state);
+  const camp = state.camp;
+  for (const piece of CAMP_LOOK_PIECES) {
+    if (here && camp?.[piece]) continue;
+    out.push({
+      id: `piece-${piece}`,
+      label: buildLabel(piece),
+      cost: here ? pieceCost(piece) : `${pieceCost(piece)} · own bench`,
+      command: pieceCommand(piece),
+    });
+  }
+  if (here && camp) {
+    for (const work of WORKS) {
+      if (hasWork(camp, work.id)) continue;
+      const can = canRaise(state, work.id);
+      if (!can.ok) continue;
+      out.push({
+        id: `raise-${work.id}`,
+        label: work.label,
+        cost: workCostLine(work),
+        command: work.label,
+      });
+    }
+  }
+  return out;
+}
+
+function stakeCopy(state: GameState, text: string, pending: PendingRoll | null) {
+  if (pending) return `${pending.label} · ${TRAIT_NAME[pending.trait]} vs DC ${pending.dc}`;
+  const trimmed = text.trim();
+  if (!trimmed) return "Declare an act. The mountain names the stake.";
+  const verb = campVerbOf(trimmed);
+  if (verb) return `${verb} · spend-and-done`;
+  const act = interpretAct(state, trimmed, true);
+  return `${act.label} · ${TRAIT_NAME[act.trait]} vs DC ${act.dc} · ${act.hours} hr`;
+}
+
+function grabCommand(state: GameState) {
+  const tags = locationOf(state, state.locationId)?.tags ?? [];
+  if (tags.includes("water") && !tags.includes("wood")) return "gather water";
+  return "gather firewood";
+}
+
 function CampStage({
   state,
   choices,
@@ -507,13 +619,14 @@ export function PlayScreen() {
   const [state, setState] = useState<GameState | null>(null);
   const [cinema, setCinema] = useState<CinemaSequence | null>(null);
   const [choiceHold, setChoiceHold] = useState(false);
-  const [tendOpen, setTendOpen] = useState(false);
   const [journalOpen, setJournalOpen] = useState(false);
   const [packOpen, setPackOpen] = useState(false);
+  const [lookBook, setLookBook] = useState<null | "trails" | "builds">(null);
   const [intent, setIntent] = useState("");
   const [listening, setListening] = useState(false);
   const holdTimer = useRef<number>(0);
   const journalEnd = useRef<HTMLDivElement>(null);
+  const intentBox = useRef<HTMLInputElement>(null);
   const booted = useRef(false);
 
   useEffect(() => {
@@ -557,7 +670,7 @@ export function PlayScreen() {
     if (seq) {
       setCinema(seq);
       setChoiceHold(false);
-      setTendOpen(false);
+      setLookBook(null);
       return;
     }
     setChoiceHold(false);
@@ -592,8 +705,26 @@ export function PlayScreen() {
 
   function act(choice: Choice) {
     if (!state || choice.disabled) return;
-    setTendOpen(false);
+    setLookBook(null);
     commit(state, choice.action);
+  }
+
+  function fillCommand(command: string) {
+    setIntent(command);
+    setLookBook(null);
+    window.setTimeout(() => {
+      const box = intentBox.current ?? document.getElementById("hc-intent");
+      box?.focus();
+    }, 0);
+  }
+
+  function declare(text: string) {
+    if (!state || listening) return;
+    const line = text.trim();
+    if (!line) return;
+    setIntent("");
+    setLookBook(null);
+    commit(state, { type: "attempt", text: line });
   }
 
   if (!state || !art) {
@@ -625,34 +756,21 @@ export function PlayScreen() {
   }
 
   const spots = !state.activeEncounterId && !state.skirmish ? campHotspots(state) : [];
-  const knownKeys = new Set(choices.map(actionKey));
   const hero = choices.filter((c) => choiceTier(c) === "hero");
-  const travel = choices.filter((c) => choiceTier(c) === "travel" || c.action.type === "travel");
-  const routineFromChoices = choices.filter((c) => choiceTier(c) === "routine");
-  const routineSpots = spots.filter((s) => s.action.type !== "pitchCamp" && !knownKeys.has(actionKey(s)));
-  const onPlate = (c: Choice) =>
-    c.action.type === "talk" ||
-    c.action.type === "makeFire" ||
-    c.action.type === "tendFire" ||
-    c.action.type === "gatherWood" ||
-    c.action.type === "gatherWater" ||
-    c.action.type === "travel" ||
-    c.id === "camp-fire" ||
-    c.id === "camp-wood" ||
-    c.id === "camp-lean";
-  const routine = [...routineFromChoices, ...routineSpots].filter((c) => !onPlate(c));
   const idle = !isUrgentBeat(state);
-  const showHero = idle ? hero : hero.filter((c) => c.action.type !== "travel");
+  const presented = state.skirmish || state.activeEncounterId ? hero : [];
   const atmosphere = timeAtmosphere(state, art.atmosphere);
   const tell = livingTellFromState(state);
-  const atCamp = Boolean(state.camp && state.camp.locationId === state.locationId);
   const log = state.skirmish ? state.log.slice(-6) : state.log;
   const lastBeat = log.at(-1);
-  const groundMoves = idle
-    ? showHero.filter(
-        (c) => c.action.type !== "wait" && c.action.type !== "travel" && c.action.type !== "finishWait",
-      )
-    : showHero;
+  const trails = trailLookBook(state);
+  const builds = buildLookBook(state);
+  const lookEntries = lookBook === "trails" ? trails : lookBook === "builds" ? builds : [];
+  const stake = stakeCopy(state, intent, state.pendingRoll);
+  const sayFill = state.presentCharacterId
+    ? `I say to ${characterOf(state, state.presentCharacterId)?.name ?? "them"} `
+    : "";
+  const canChoose = idle && !state.waitScene && !listening;
 
   return (
     <div
@@ -734,6 +852,9 @@ export function PlayScreen() {
                 <p className="mt-2 text-sm leading-relaxed text-amber-50/90">{scene.narration}</p>
               )}
             </div>
+            <p className="hc-stake" data-hc="stake">
+              {stake}
+            </p>
             {!state.dead && !state.skirmish && (
               <form
                 className="hc-try flex shrink-0 gap-2"
@@ -746,9 +867,11 @@ export function PlayScreen() {
                 }}
               >
                 <Input
+                  id="hc-intent"
+                  ref={intentBox}
                   value={intent}
                   onChange={(e) => setIntent(e.target.value)}
-                  placeholder="Type anything. The mountain answers."
+                  placeholder="Type the hour. Trails and builds fill this bar."
                   maxLength={400}
                   autoComplete="off"
                   disabled={listening}
@@ -762,7 +885,7 @@ export function PlayScreen() {
             {state.pendingRoll ? (
               <FateDie
                 pending={state.pendingRoll}
-                retreats={showHero}
+                retreats={hero}
                 scene={state.log[state.log.length - 1]?.text}
                 onCast={() => setState((s) => (s ? applyAction(s, { type: "castDie" }) : s))}
                 onSettled={() => {
@@ -786,38 +909,90 @@ export function PlayScreen() {
                   livingTellFrostsChrome(tell) && "hc-live-frost",
                 )}
               >
-                {!state.dead && !state.skirmish && (
-                  <p className="text-[10px] tracking-[0.2em] text-amber-100/40 uppercase">Suggestions · typing is the hour</p>
-                )}
-                {(idle || state.waitScene) &&
-                  showHero
-                    .filter((c) => c.action.type === "wait" || c.action.type === "finishWait")
-                    .map((c) => (
+                {presented.length > 0 && (
+                  <div className="flex flex-wrap gap-2">
+                    {presented.map((c) => (
                       <Button
                         key={c.id}
+                        size="lg"
+                        variant={c.action.type === "skirmish" && c.id === "flee" ? "secondary" : "default"}
                         disabled={c.disabled}
                         title={c.hint}
                         onClick={() => act(c)}
-                        className="h-11 w-full max-w-md px-4 text-base tracking-[0.12em] sm:h-12"
+                        className="hc-choice-btn"
                       >
                         {c.label}
                       </Button>
                     ))}
-                <div className="flex flex-wrap gap-2">
-                  {groundMoves.map((c) => (
-                    <Button
-                      key={c.id}
-                      size={idle ? "default" : "lg"}
-                      variant={c.action.type === "skirmish" && c.id === "flee" ? "secondary" : "default"}
-                      disabled={c.disabled}
-                      title={c.hint}
-                      onClick={() => act(c)}
-                      className="hc-choice-btn"
-                    >
-                      {c.label}
-                    </Button>
-                  ))}
-                </div>
+                  </div>
+                )}
+                {canChoose && (
+                  <div className="hc-body-acts" data-hc="body-acts">
+                    {BODY_ACTS.map((verb) => (
+                      <Button
+                        key={verb.id}
+                        type="button"
+                        data-hc={`body-${verb.id}`}
+                        disabled={listening}
+                        onClick={() => commit(state, verb.action)}
+                        className="hc-body-act h-10 w-full"
+                      >
+                        {verb.label}
+                      </Button>
+                    ))}
+                  </div>
+                )}
+                {!state.dead && !state.skirmish && !state.waitScene && (
+                  <div className="hc-act-strip" data-hc="act-strip">
+                    {(
+                      [
+                        ["fire", () => declare(state.campfire ? "tend the fire" : "make a fire")],
+                        ["build", () => setLookBook((open) => (open === "builds" ? null : "builds"))],
+                        ["trail", () => setLookBook((open) => (open === "trails" ? null : "trails"))],
+                        ["hunt", () => declare("hunt")],
+                        ["grab", () => declare(grabCommand(state))],
+                        ["say", () => fillCommand(sayFill)],
+                      ] as const
+                    ).map(([id, onClick]) => (
+                      <button
+                        key={id}
+                        type="button"
+                        data-hc={`strip-${id}`}
+                        disabled={listening}
+                        onClick={onClick}
+                        className={cn("hc-act-chip", lookBook === (id === "build" ? "builds" : id === "trail" ? "trails" : "") && "is-open")}
+                      >
+                        {id}
+                      </button>
+                    ))}
+                  </div>
+                )}
+                {lookBook && (
+                  <div className="hc-lookbook" data-hc="lookbook" data-book={lookBook}>
+                    <p className="hc-lookbook-kicker">{lookBook === "trails" ? "Trails" : "Builds"} · fills the bar</p>
+                    {lookEntries.length === 0 ? (
+                      <p className="hc-lookbook-empty">
+                        {lookBook === "trails" ? "No named trail from this ground." : "Nothing to raise on this bench."}
+                      </p>
+                    ) : (
+                      <ul className="hc-lookbook-list">
+                        {lookEntries.map((entry) => (
+                          <li key={entry.id}>
+                            <button
+                              type="button"
+                              className="hc-lookbook-item"
+                              data-command={entry.command}
+                              onClick={() => fillCommand(entry.command)}
+                            >
+                              <span className="hc-lookbook-label">{entry.label}</span>
+                              <span className="hc-lookbook-cost">{entry.cost}</span>
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                )}
                 <div className="flex flex-wrap items-center gap-2">
                   <Sheet open={journalOpen} onOpenChange={setJournalOpen}>
                     <SheetTrigger className="inline-flex h-8 items-center rounded-lg border border-white/20 bg-black/40 px-3 text-[0.8rem] tracking-[0.18em] text-amber-100/75 uppercase hover:border-amber-200/40 hover:text-amber-50">
@@ -834,39 +1009,6 @@ export function PlayScreen() {
                       </div>
                     </SheetContent>
                   </Sheet>
-                  {idle && routine.length > 0 && (
-                    <Sheet open={tendOpen} onOpenChange={setTendOpen}>
-                      <SheetTrigger className="inline-flex h-8 items-center rounded-lg border border-white/20 bg-black/40 px-3 text-[0.8rem] tracking-[0.18em] text-amber-100/75 uppercase hover:border-amber-200/40 hover:text-amber-50">
-                        {atCamp ? "Your camp" : "Tend camp"}
-                      </SheetTrigger>
-                      <SheetContent
-                        side="bottom"
-                        className="max-h-[70dvh] border-white/15 bg-black/92 text-stone-100 sm:max-w-none"
-                      >
-                        <SheetHeader>
-                          <SheetTitle className="text-amber-50">{atCamp ? "Your camp" : "Tend camp"}</SheetTitle>
-                          <SheetDescription className="text-stone-400">
-                            {atCamp ? "The work of this ground." : "Small work. The mountain keeps the hours."}
-                          </SheetDescription>
-                        </SheetHeader>
-                        <div className={cn("flex flex-wrap gap-2 overflow-y-auto px-4 pb-6", atCamp && "sm:grid sm:grid-cols-2 sm:gap-2")}>
-                          {routine.map((c) => (
-                            <Button
-                              key={c.id}
-                              size="sm"
-                              variant="secondary"
-                              disabled={c.disabled}
-                              title={c.hint}
-                              className={cn("hc-choice-btn", atCamp && c.id === "camp-strike" ? "sm:col-span-2" : undefined)}
-                              onClick={() => act(c)}
-                            >
-                              {c.label}
-                            </Button>
-                          ))}
-                        </div>
-                      </SheetContent>
-                    </Sheet>
-                  )}
                   <Sheet open={packOpen} onOpenChange={setPackOpen}>
                     <SheetTrigger className="inline-flex h-8 items-center rounded-lg border border-white/20 bg-black/40 px-3 text-[0.8rem] tracking-[0.18em] text-amber-100/75 uppercase hover:border-amber-200/40 hover:text-amber-50 lg:hidden">
                       Pack
@@ -882,25 +1024,6 @@ export function PlayScreen() {
                     </SheetContent>
                   </Sheet>
                 </div>
-                {travel.length > 0 && (
-                  <div className="space-y-1.5">
-                    <p className="text-[11px] tracking-[0.25em] text-amber-100/60 uppercase">Trails</p>
-                    <div className="flex flex-wrap gap-2">
-                      {travel.map((c) => (
-                        <Button
-                          key={c.id}
-                          size="sm"
-                          variant="outline"
-                          title={c.hint}
-                          className="hc-choice-btn"
-                          onClick={() => act(c)}
-                        >
-                          {c.label}
-                        </Button>
-                      ))}
-                    </div>
-                  </div>
-                )}
               </div>
             )}
           </div>
