@@ -139,6 +139,19 @@ export function campVerbOf(text: string): CampVerb | null {
   return null;
 }
 
+/** Keep-title / Stay-on-ground / Leave-obj buttons from the old genericEncounter maze. */
+export function isSoftFollowUpLabel(label: string): boolean {
+  const t = label.trim();
+  return /^(keep)\b/i.test(t) || /^stay (in|on|with)\b/i.test(t) || /^leave \S.+( at | for now)/i.test(t);
+}
+
+/** gm-* residual or leftover Keep/Stay/Leave follow-up. Not a live idle scene. */
+export function isLeftoverActMaze(enc: EncounterDef): boolean {
+  if (!enc.id.startsWith("gm-")) return false;
+  if (!enc.choices.length) return true;
+  return enc.choices.some((c) => isSoftFollowUpLabel(c.label));
+}
+
 /** Conservative: same choice, not shared small words. */
 export function matchPresentedOption(text: string, choices: EncounterChoice[]): EncounterChoice | null {
   const player = contentTokens(text);
@@ -568,7 +581,7 @@ function makePlace(state: GameState, name: string): GeneratedPlace {
   };
 }
 
-/** Stored for save/polish. Never opened as a Keep / Stay / Leave maze. */
+/** Polish/save hook only. Empty choices — never a Keep / Stay / Leave live scene. */
 function residualEncounter(facts: StoryFact[], narration: string): EncounterDef {
   const lead = facts[0];
   return {
@@ -696,6 +709,17 @@ function narrate(state: GameState, slots: Slots, locName: string, success: boole
       bits.push(`${titleCase(obj)} is now a fact at ${locName}.`);
     } else {
       bits.push(`${actTitle(slots.raw)} is now a fact at ${locName}.`);
+    }
+  }
+
+  if (!success) {
+    const joined = bits.join(" ");
+    if (
+      !/spark dies|does not stand|takes more out of you|roof sags|ice takes a tax|come down harder|thinks of dying|bank is stingy|comes apart in the hands/i.test(
+        joined,
+      )
+    ) {
+      bits.push("It comes apart in the hands.");
     }
   }
 
@@ -1131,6 +1155,10 @@ export function interpretAct(state: GameState, text: string, success: boolean): 
   if (present && encounter.characterId == null && (slots.song || slots.gift || slots.lie || slots.accuse)) {
     encounter = { ...encounter, characterId: present };
   }
+  encounter = {
+    ...encounter,
+    choices: encounter.choices.filter((c) => !isSoftFollowUpLabel(c.label)),
+  };
 
   return {
     risky: die.risky,
@@ -1165,7 +1193,7 @@ export function planDie(text: string): { trait: Trait; dc: number; label: string
   if (/\bhunt|shoot|rifle|elk|deer\b/.test(line)) return { trait: "eye", dc: 12, label: "The shot", hours: 2 };
   if (/\bask|talk|speak|trade\b/.test(line)) return { trait: "savvy", dc: 11, label: "The words", hours: 1 };
   if (/\bscout|track|sign\b/.test(line)) return { trait: "savvy", dc: 12, label: "The ground", hours: 2 };
-  return { trait: "savvy", dc: 13, label: "The act", hours: 1 };
+  return { trait: "savvy", dc: 13, label: actTitle(text), hours: 1 };
 }
 
 export const TEMPLATE_MARKERS = [

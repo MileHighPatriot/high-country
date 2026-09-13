@@ -1,11 +1,19 @@
 import { emptyCamp } from "@/lib/game/camp";
 import { CHARACTER_BY_ID } from "@/lib/game/content/characters";
 import { applyAction, createGame, getChoices } from "@/lib/game/engine";
-import { campVerbOf, looksLikeTemplate, matchPresentedOption } from "@/lib/game/gm";
+import {
+  campVerbOf,
+  isLeftoverActMaze,
+  isSoftFollowUpLabel,
+  looksLikeTemplate,
+  matchPresentedOption,
+} from "@/lib/game/gm";
 import { hydrateGame, parseGame, serializeGame } from "@/lib/game/save";
 import { sceneNarration } from "@/lib/game/scene";
 import { liveTalkId } from "@/lib/game/talk";
-import type { GameState } from "@/lib/game/types";
+import type { EncounterDef, GameState } from "@/lib/game/types";
+
+// Grok Build re-verified 2026-09-13: declare arms trait+DC, roll forks, idle camp (no Keep/Stay/Leave maze).
 
 function assert(cond: unknown, msg: string): asserts cond {
   if (!cond) throw new Error(msg);
@@ -64,8 +72,8 @@ function notTemplate(text: string, label: string) {
   assert(!looksLikeTemplate(text), `${label} collapsed to a template: ${text}`);
 }
 
-function isSoftFollowUp(label: string) {
-  return /^(keep)\b/i.test(label) || /^stay (in|on|with)\b/i.test(label) || /^leave \S.+( at | for now)/i.test(label);
+function leftoverMazes(state: GameState): EncounterDef[] {
+  return (state.generatedEncounters ?? []).filter((e) => isLeftoverActMaze(e));
 }
 
 function assertIdleAfterAct(state: GameState, label: string) {
@@ -73,17 +81,30 @@ function assertIdleAfterAct(state: GameState, label: string) {
   assert(!state.activeEncounterId, `${label}: should return to idle, still ${state.activeEncounterId}`);
   const labels = getChoices(state).map((c) => c.label);
   assert(
-    !labels.some((l) => isSoftFollowUp(l)),
+    !labels.some((l) => isSoftFollowUpLabel(l)),
     `${label}: soft Keep/Stay/Leave follow-up, got ${labels.join(" / ")}`,
+  );
+  assert(
+    leftoverMazes(state).length === 0,
+    `${label}: leftover Keep/Stay/Leave maze still stored (${leftoverMazes(state)
+      .map((e) => e.id)
+      .join(", ")})`,
+  );
+  assert(
+    labels.some((l) => l === "Let time pass"),
+    `${label}: idle camp should offer Let time pass, got ${labels.join(" / ")}`,
   );
 }
 
 function assertDeclareThenRoll(state: GameState, text: string, label: string) {
+  const before = journal(state);
   const armed = applyAction(state, { type: "attempt", text });
   assert(armed.pendingRoll, `${label}: typed act must arm a die`);
   assert(armed.pendingRoll.trait, `${label}: stake needs a trait`);
   assert(armed.pendingRoll.dc > 0, `${label}: stake needs a DC`);
+  assert(armed.pendingRoll.d20 == null, `${label}: declare arms the die, it does not cast it`);
   assert(!armed.activeEncounterId, `${label}: declare must stay idle until the roll`);
+  assert(journal(armed) === before, `${label}: intent-only — no outcome prose until the roll`);
   return armed;
 }
 
@@ -111,6 +132,7 @@ assert(!caveArmed.inventory.extras.includes("snow-hole"), "cave must not resolve
 const cave = throwDie(caveArmed, true);
 const caveJournal = journal(cave);
 notTemplate(caveJournal, "snow cave");
+assert(/vs DC \d+/i.test(caveJournal), `cave stake must log trait vs DC: ${caveJournal}`);
 assert(/snow cave/i.test(caveJournal), `cave journal must name the cave: ${caveJournal}`);
 assert(/deadfall/i.test(caveJournal), `cave journal must keep deadfall: ${caveJournal}`);
 assert(/blanket/i.test(caveJournal), `cave journal must keep blanket: ${caveJournal}`);
@@ -273,6 +295,10 @@ assert(
 );
 assertIdleAfterAct(pebble, "pebble");
 assertIdleAfterAct(carved, "carve");
+assert(!/comes apart in the hands/i.test(journal(pebble)), "successful pebble is not a fail fork");
+const pebbleFail = say(idleAt(createGame("Pebble Fail", "coat"), "creek"), "I throw a pebble at a magpie", false);
+assert(/comes apart in the hands/i.test(journal(pebbleFail)), `pebble fail must fork: ${journal(pebbleFail)}`);
+assertIdleAfterAct(pebbleFail, "pebble fail");
 
 // --- known recipes: fire / raise ---
 s = idleAt(createGame("Fire Ward", "coat"), "high-camp");
@@ -315,6 +341,30 @@ const raiseFail = say(
 );
 assert(!raiseFail.camp?.jobs.some((j) => j.kind === "platform") && !raiseFail.camp?.platform, "failed raise does not stand");
 assertIdleAfterAct(raiseFail, "failed raise");
+
+// leftover genericEncounter maze from an earlier save must die after a typed act
+s = idleAt(createGame("Maze Kill", "coat"), "high-camp");
+s = {
+  ...s,
+  generatedEncounters: [
+    {
+      id: "gm-old-maze",
+      repeatable: true,
+      text: "The next hour is still Keep digging.",
+      choices: [
+        { id: "keep", label: "Keep digging", outcome: { text: "You keep at it.", hours: 1 } },
+        { id: "stay", label: "Stay on this ground", outcome: { text: "You stay.", hours: 2 } },
+        { id: "leave", label: "Leave the cave for now", outcome: { text: "You leave.", hours: 1 } },
+      ],
+    },
+  ],
+};
+const mazeKilled = say(s, "I throw a pebble at a magpie");
+assertIdleAfterAct(mazeKilled, "leftover maze");
+assert(
+  !(mazeKilled.generatedEncounters ?? []).some((e) => e.id === "gm-old-maze"),
+  "leftover Keep/Stay/Leave maze must die after a typed act",
+);
 
 console.log("improv ok", {
   caveIdle: !cave.activeEncounterId,
