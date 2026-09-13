@@ -65,7 +65,7 @@ function notTemplate(text: string, label: string) {
 }
 
 function isSoftFollowUp(label: string) {
-  return /^(keep|stay|leave)\b/i.test(label) || /^stay (in|on|with)\b/i.test(label);
+  return /^(keep)\b/i.test(label) || /^stay (in|on|with)\b/i.test(label) || /^leave \S.+( at | for now)/i.test(label);
 }
 
 function assertIdleAfterAct(state: GameState, label: string) {
