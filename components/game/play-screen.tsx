@@ -45,7 +45,7 @@ import type { CampPiece, Choice, GameAction, GameState, Kit, LogEntry, PendingRo
 import { timeBand } from "@/lib/game/types";
 import { cn } from "@/lib/utils";
 import { livingTellFromState, livingTellFrostsChrome } from "@/lib/game/living-plate";
-import { canRaise, dwellingLine, hasWork, WORKS } from "@/lib/game/homestead";
+import { campStageModel, dwellingLine, homesteadLookBook } from "@/lib/game/homestead";
 import { getScene } from "@/lib/game/scene";
 import { peopleAt } from "@/lib/game/world";
 import { withBase } from "@/lib/paths";
@@ -172,6 +172,46 @@ function Meter({ label, value, warn }: { label: string; value: number; warn?: bo
   );
 }
 
+function DwellingProgress({ state }: { state: GameState }) {
+  if (!state.camp) return null;
+  const model = campStageModel(state);
+  const steps = [
+    { id: "platform" as const, label: "Platform", up: model.platform, mid: false },
+    {
+      id: "walls" as const,
+      label: `Walls ${model.wallCount}/4`,
+      up: model.wallCount >= 4,
+      mid: model.wallCount > 0 && model.wallCount < 4,
+    },
+    { id: "roof" as const, label: "Roof", up: model.roof, mid: false },
+    { id: "door" as const, label: "Door", up: model.door, mid: false },
+    { id: "stove" as const, label: "Stove", up: model.stove, mid: false },
+  ];
+  return (
+    <div
+      className="hc-dwell-progress"
+      data-hc="dwell-progress"
+      data-platform={model.platform ? "1" : "0"}
+      data-walls={String(model.wallCount)}
+      data-roof={model.roof ? "1" : "0"}
+      data-door={model.door ? "1" : "0"}
+      data-stove={model.stove ? "1" : "0"}
+      aria-label={model.dwellingLine || "Dwelling"}
+    >
+      {steps.map((step) => (
+        <span
+          key={step.id}
+          className={cn("hc-dwell-step", step.up && "is-up", step.mid && "is-mid")}
+          data-layer={step.id}
+          data-up={step.up ? "1" : "0"}
+        >
+          {step.label}
+        </span>
+      ))}
+    </div>
+  );
+}
+
 function Status({ state }: { state: GameState }) {
   const loc = locationOf(state, state.locationId);
   const person = state.presentCharacterId ? characterOf(state, state.presentCharacterId) : null;
@@ -242,13 +282,16 @@ function Status({ state }: { state: GameState }) {
         </ul>
       )}
       {state.camp && (
-        <p className="text-xs text-amber-100/70">
-          {dwellingLine(state.camp)} at {locationOf(state, state.camp.locationId)?.name ?? state.camp.locationId}
-          {state.camp.locationId === state.locationId ? " · here" : ""}
-          {state.camp.locked ? " · locked" : ""}
-          {state.camp.smoke > 0 ? ` · smoke ${state.camp.smoke}` : ""}
-          {state.camp.jobs.some((j) => j.hoursLeft <= 0) ? " · work ready" : ""}
-        </p>
+        <div className="space-y-1.5">
+          <p className="text-xs text-amber-100/70">
+            {dwellingLine(state.camp)} at {locationOf(state, state.camp.locationId)?.name ?? state.camp.locationId}
+            {state.camp.locationId === state.locationId ? " · here" : ""}
+            {state.camp.locked ? " · locked" : ""}
+            {state.camp.smoke > 0 ? ` · smoke ${state.camp.smoke}` : ""}
+            {state.camp.jobs.some((j) => j.hoursLeft <= 0) ? " · work ready" : ""}
+          </p>
+          <DwellingProgress state={state} />
+        </div>
       )}
       {state.camp && state.camp.locationId === state.locationId && (
         <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-xs text-stone-400">
@@ -317,7 +360,14 @@ const BODY_ACTS = [
 
 const CAMP_LOOK_PIECES: CampPiece[] = ["leanTo", "fireRing", "woodpile", "cachePit", "dryingRack"];
 
-type LookEntry = { id: string; label: string; cost: string; command: string };
+type LookEntry = {
+  id: string;
+  label: string;
+  cost: string;
+  command: string;
+  available?: boolean;
+  reason?: string;
+};
 
 function pieceCommand(piece: CampPiece) {
   return {
@@ -334,17 +384,6 @@ function pieceCost(piece: CampPiece) {
   const hours = buildHours(piece);
   const wood = piece === "leanTo" ? 2 : piece === "woodpile" || piece === "dryingRack" || piece === "fireRing" ? 1 : 0;
   return [wood ? `${wood} wood` : null, `${hours} hr`].filter(Boolean).join(" · ");
-}
-
-function workCostLine(work: (typeof WORKS)[number], reason?: string) {
-  const bits = [work.kind === "job" ? `${work.hours} hr job` : `${work.hours} hr`];
-  if (work.logs) bits.push(`${work.logs} logs`);
-  if (work.stone) bits.push(`${work.stone} stone`);
-  if (work.pelts) bits.push(`${work.pelts} pelts`);
-  if (work.firewood) bits.push(`${work.firewood} wood`);
-  if (work.tools?.length) bits.push(work.tools.join(" · "));
-  if (reason) bits.push(reason);
-  return bits.join(" · ");
 }
 
 function trailLookBook(state: GameState): LookEntry[] {
@@ -390,15 +429,14 @@ function buildLookBook(state: GameState): LookEntry[] {
     });
   }
   if (here && camp) {
-    for (const work of WORKS) {
-      if (hasWork(camp, work.id)) continue;
-      const can = canRaise(state, work.id);
-      if (!can.ok) continue;
+    for (const row of homesteadLookBook(state)) {
       out.push({
-        id: `raise-${work.id}`,
-        label: work.label,
-        cost: workCostLine(work),
-        command: work.label,
+        id: row.id,
+        label: row.label,
+        cost: row.cost,
+        command: row.command,
+        available: row.available,
+        reason: row.reason,
       });
     }
   }
@@ -455,9 +493,30 @@ function CampStage({
   const fireDying = waiting && scene?.fireDies;
   const arrivalIn = waiting && scene?.arrivalId && !state.presentCharacterId;
   const waterChoice = findChoice(pool, (c) => c.action.type === "gatherWater");
+  const dwell = atCamp ? campStageModel(state) : null;
 
   return (
     <div className="pointer-events-none absolute inset-0">
+      {dwell && (
+        <div
+          className="hc-dwell"
+          data-hc="dwell-sil"
+          data-layers={dwell.silhouette.join(" ")}
+          data-walls={String(dwell.wallCount)}
+          aria-hidden
+        >
+          <div className={cn("hc-dwell-platform", dwell.platform ? "is-built" : "is-ghost")} data-layer="platform" />
+          <div className={cn("hc-dwell-walls", dwell.wallCount > 0 ? "is-built" : "is-ghost")} data-layer="walls">
+            <i className={cn("hc-dwell-stub is-wind", dwell.walls.wind ? "is-built" : "is-ghost")} />
+            <i className={cn("hc-dwell-stub is-creek", dwell.walls.creek ? "is-built" : "is-ghost")} />
+            <i className={cn("hc-dwell-stub is-timber", dwell.walls.timber ? "is-built" : "is-ghost")} />
+            <i className={cn("hc-dwell-stub is-pass", dwell.walls.pass ? "is-built" : "is-ghost")} />
+          </div>
+          <div className={cn("hc-dwell-roof", dwell.roof ? "is-built" : "is-ghost")} data-layer="roof" />
+          {dwell.door && <div className="hc-dwell-door is-built" data-layer="door" />}
+          {dwell.stove && <div className="hc-dwell-stove is-built" data-layer="stove" />}
+        </div>
+      )}
       {showLean && (
         <button
           type="button"
@@ -853,6 +912,9 @@ export function PlayScreen() {
                 </div>
               ))}
             </div>
+            <div className="lg:hidden">
+              <DwellingProgress state={state} />
+            </div>
             <div className="hc-now rounded-lg bg-black/45 px-3 py-2">
               {lastBeat && (
                 <div className="space-y-1">
@@ -1004,19 +1066,35 @@ export function PlayScreen() {
                       </p>
                     ) : (
                       <ul className="hc-lookbook-list">
-                        {lookEntries.map((entry) => (
-                          <li key={entry.id}>
-                            <button
-                              type="button"
-                              className="hc-lookbook-item"
-                              data-command={entry.command}
-                              onClick={() => fillCommand(entry.command)}
-                            >
-                              <span className="hc-lookbook-label">{entry.label}</span>
-                              <span className="hc-lookbook-cost">{entry.cost}</span>
-                            </button>
-                          </li>
-                        ))}
+                        {lookEntries.map((entry) => {
+                          const blocked = entry.available === false;
+                          return (
+                            <li key={entry.id}>
+                              {blocked ? (
+                                <div
+                                  className="hc-lookbook-item is-blocked"
+                                  data-hc="look-blocked"
+                                  data-id={entry.id}
+                                >
+                                  <span className="hc-lookbook-label">{entry.label}</span>
+                                  <span className="hc-lookbook-cost">{entry.cost}</span>
+                                  {entry.reason && <span className="hc-lookbook-reason">{entry.reason}</span>}
+                                </div>
+                              ) : (
+                                <button
+                                  type="button"
+                                  className="hc-lookbook-item"
+                                  data-hc="look-open"
+                                  data-command={entry.command}
+                                  onClick={() => fillCommand(entry.command)}
+                                >
+                                  <span className="hc-lookbook-label">{entry.label}</span>
+                                  <span className="hc-lookbook-cost">{entry.cost}</span>
+                                </button>
+                              )}
+                            </li>
+                          );
+                        })}
                       </ul>
                     )}
                   </div>
