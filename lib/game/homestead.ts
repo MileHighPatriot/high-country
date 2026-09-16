@@ -3,6 +3,7 @@ import { LOCATION_BY_ID } from "@/lib/game/content/locations";
 import type {
   CampSite,
   CampStowItem,
+  CampWalls,
   Choice,
   CraftTool,
   GameState,
@@ -33,6 +34,31 @@ export interface HomesteadWork {
   tags?: Array<"water" | "wood" | "shelter" | "game">;
 }
 
+/** Keys the UI can map to silhouette art. This module does not name files. */
+export const HOMESTEAD_SILHOUETTE_LAYERS = ["platform", "walls", "roof", "door", "stove"] as const;
+export type HomesteadSilhouetteLayer = (typeof HOMESTEAD_SILHOUETTE_LAYERS)[number];
+
+export interface CampStageModel {
+  platform: boolean;
+  walls: CampWalls;
+  wallCount: number;
+  roof: boolean;
+  door: boolean;
+  stove: boolean;
+  dwellingLine: string;
+  silhouette: HomesteadSilhouetteLayer[];
+}
+
+export interface HomesteadLookRow {
+  id: string;
+  label: string;
+  cost: string;
+  command: string;
+  available: boolean;
+  reason?: string;
+}
+
+const EMPTY_WALLS: CampWalls = { wind: false, creek: false, timber: false, pass: false };
 const WALLS: HomesteadWorkId[] = ["wall-wind", "wall-creek", "wall-timber", "wall-pass"];
 
 export const WORKS: HomesteadWork[] = [
@@ -87,7 +113,7 @@ export function hasTool(state: GameState, tool: CraftTool): boolean {
 }
 
 function wallCount(camp: CampSite): number {
-  const w = camp.walls ?? { wind: false, creek: false, timber: false, pass: false };
+  const w = camp.walls ?? EMPTY_WALLS;
   return Number(w.wind) + Number(w.creek) + Number(w.timber) + Number(w.pass);
 }
 
@@ -252,6 +278,58 @@ export function homesteadChoices(state: GameState): Choice[] {
   return out.slice(0, 8);
 }
 
+export function raiseCostLine(work: HomesteadWork): string {
+  const bits: string[] = [];
+  if (work.kind === "job") bits.push(`${work.hours} hr job`);
+  else bits.push(`${work.hours} hr`);
+  if (work.logs) bits.push(`${work.logs} logs`);
+  if (work.stone) bits.push(`${work.stone} stone`);
+  if (work.pelts) bits.push(`${work.pelts} pelts`);
+  if (work.firewood) bits.push(`${work.firewood} wood`);
+  if (work.tools?.length) bits.push(work.tools.join(" · "));
+  return bits.join(" · ");
+}
+
+function dwellingPrereqsStand(camp: CampSite, work: HomesteadWork): boolean {
+  if (work.slot !== "dwelling") return false;
+  for (const n of work.needs ?? []) {
+    if (!hasWork(camp, n)) return false;
+  }
+  return true;
+}
+
+/** Available raises plus blocked next dwelling raises, for the builds lookbook. */
+export function homesteadLookBook(state: GameState): HomesteadLookRow[] {
+  if (!state.camp) return [];
+  const camp = state.camp;
+  const rows: HomesteadLookRow[] = [];
+  for (const work of WORKS) {
+    if (hasWork(camp, work.id)) continue;
+    if (camp.jobs.some((j) => j.kind === work.id)) continue;
+    const can = canRaise(state, work.id);
+    if (can.ok) {
+      rows.push({
+        id: `raise-${work.id}`,
+        label: work.label,
+        cost: raiseCostLine(work),
+        command: work.label,
+        available: true,
+      });
+      continue;
+    }
+    if (!can.reason || !atOwnCamp(state) || !dwellingPrereqsStand(camp, work)) continue;
+    rows.push({
+      id: `raise-${work.id}`,
+      label: work.label,
+      cost: raiseCostLine(work),
+      command: work.label,
+      available: false,
+      reason: can.reason,
+    });
+  }
+  return rows;
+}
+
 function canHint(work: HomesteadWork): string {
   const bits: string[] = [];
   if (work.kind === "job") bits.push(`${work.hours} hr job`);
@@ -272,6 +350,51 @@ export function dwellingLine(camp: CampSite): string {
   if (camp.platform) return "Locked platform";
   if (camp.leanTo) return "Lean-to";
   return "Claimed bench";
+}
+
+function campFrom(source: CampSite | GameState | null | undefined): CampSite | null {
+  if (!source) return null;
+  if ("meters" in source) return source.camp ?? null;
+  return source;
+}
+
+/** Pure readable homestead progress. Bind this; do not invent art files here. */
+export function campStageModel(source: CampSite | GameState | null | undefined): CampStageModel {
+  const camp = campFrom(source);
+  if (!camp) {
+    return {
+      platform: false,
+      walls: { ...EMPTY_WALLS },
+      wallCount: 0,
+      roof: false,
+      door: false,
+      stove: false,
+      dwellingLine: "",
+      silhouette: [],
+    };
+  }
+  const walls: CampWalls = { ...EMPTY_WALLS, ...(camp.walls ?? {}) };
+  const platform = Boolean(camp.platform);
+  const roof = Boolean(camp.roof);
+  const door = Boolean(camp.door);
+  const stove = Boolean(camp.stove);
+  const count = wallCount(camp);
+  const silhouette: HomesteadSilhouetteLayer[] = [];
+  if (platform) silhouette.push("platform");
+  if (count > 0) silhouette.push("walls");
+  if (roof) silhouette.push("roof");
+  if (door) silhouette.push("door");
+  if (stove) silhouette.push("stove");
+  return {
+    platform,
+    walls,
+    wallCount: count,
+    roof,
+    door,
+    stove,
+    dwellingLine: dwellingLine(camp),
+    silhouette,
+  };
 }
 
 export function chopBonus(state: GameState): number {
